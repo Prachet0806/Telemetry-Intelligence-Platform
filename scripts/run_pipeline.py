@@ -20,6 +20,7 @@ from processing.baseline_rules import apply_baseline_rules
 from ml.supervised import train_supervised_model
 from ml.unsupervised import train_unsupervised_model
 from ml.evaluation import evaluate_against_baseline
+from explainability.genai_explainer import generate_explanation
 from scripts.generate_mock_telemetry import generate_dataset
 
 # -------------------------------------------------------------------
@@ -122,6 +123,24 @@ metrics = {
     },
     "supervised": sup_report,
 }
+
+# -------------------------------------------------------------------
+# GenAI summary (optional)
+# -------------------------------------------------------------------
+
+summary_payload = {
+    "total_events": len(df),
+    "high_risk_count": int(y.sum()),
+    "high_risk_percentage": round(float(y.mean() * 100), 2),
+}
+try:
+    metrics["genai_summary"] = generate_explanation(summary_payload)
+    metrics["genai_status"] = "ok"
+except Exception as exc:
+    metrics["genai_summary"] = (
+        "GenAI summary unavailable due to an error during generation."
+    )
+    metrics["genai_status"] = f"error: {type(exc).__name__}"
 
 metrics["baseline_vs_supervised"] = (
     evaluate_against_baseline(y, baseline_flags)

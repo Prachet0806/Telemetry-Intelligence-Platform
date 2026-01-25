@@ -1,6 +1,7 @@
 # dashboard/app.py
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -46,7 +47,6 @@ st.caption("Cloud telemetry analytics with deterministic rules and responsible M
 # -------------------------------------------------------------------
 
 def run_pipeline():
-    """Run the end-to-end pipeline as a subprocess."""
     return subprocess.run(
         [sys.executable, str(PIPELINE_SCRIPT)],
         cwd=str(PROJECT_ROOT),
@@ -56,7 +56,7 @@ def run_pipeline():
     )
 
 # -------------------------------------------------------------------
-# First-run / missing data handling
+# First-run handling
 # -------------------------------------------------------------------
 
 if not FEATURES_PATH.exists():
@@ -69,35 +69,19 @@ if not FEATURES_PATH.exists():
         """
     )
 
-    st.markdown("### Available Actions")
     st.code("python scripts/run_pipeline.py")
 
     if st.button("Run Pipeline", type="primary"):
-        with st.spinner("Running pipeline… This may take a moment."):
+        with st.spinner("Running pipeline…"):
             try:
                 result = run_pipeline()
                 st.success("Pipeline completed successfully.")
-
-                st.subheader("Pipeline Output")
-                st.text_area(
-                    label="stdout",
-                    value=result.stdout,
-                    height=250,
-                )
-
-                # Give filesystem a moment to settle, then reload UI
+                st.text_area("Pipeline Output", result.stdout, height=250)
                 time.sleep(1)
                 st.experimental_rerun()
-
             except subprocess.CalledProcessError as exc:
                 st.error("Pipeline execution failed.")
-
-                st.subheader("Error Output")
-                st.text_area(
-                    label="stderr",
-                    value=exc.stderr,
-                    height=250,
-                )
+                st.text_area("Error Output", exc.stderr, height=250)
 
     st.stop()
 
@@ -122,10 +106,8 @@ col1, col2 = st.columns(2)
 with col1:
     st.metric("Total Events", len(df))
 with col2:
-    st.metric(
-        "High-Risk Events (%)",
-        round(df["label_high_risk"].mean() * 100, 2),
-    )
+    high_risk_pct = round(df["label_high_risk"].mean() * 100, 2)
+    st.metric("High-Risk Events (%)", high_risk_pct)
 
 # -------------------------------------------------------------------
 # Distribution
@@ -142,46 +124,50 @@ if metrics:
     st.subheader("Pipeline Metrics")
 
     col1, col2, col3 = st.columns(3)
-
     with col1:
-        st.metric(
-            "Invalid Events Dropped",
-            metrics["ingestion"]["invalid_events"],
-        )
-
+        st.metric("Invalid Events Dropped", metrics["ingestion"]["invalid_events"])
     with col2:
         st.metric(
             "Baseline Positive Rate",
             round(metrics["baseline"]["positive_rate"], 3),
         )
-
     with col3:
         st.metric(
             "Unsupervised Anomaly Rate",
             round(metrics["unsupervised"]["anomaly_rate"], 3),
         )
 
-    # Supervised status
-    supervised_metrics = metrics.get("supervised", {})
-    if isinstance(supervised_metrics, dict) and "warning" in supervised_metrics:
-        st.warning(
-            f"Supervised ML skipped: {supervised_metrics['warning']}"
-        )
-
 # -------------------------------------------------------------------
-# Explainability
+# Explainability (STRICTLY FACT-BASED)
 # -------------------------------------------------------------------
 
 st.subheader("AI-Generated Summary")
 
-summary_text = f"""
-Total events analyzed: {len(df)}
-High-risk proportion: {df['label_high_risk'].mean():.2f}
-"""
+high_risk_count = int(df["label_high_risk"].sum())
+total_events = len(df)
+high_risk_pct = round((high_risk_count / total_events) * 100, 2)
 
-st.caption(
-    "Explainability output is currently a placeholder. "
-    "No automated decisions or enforcement are performed."
-)
+summary_payload = {
+    "total_events": total_events,
+    "high_risk_count": high_risk_count,
+    "high_risk_percentage": high_risk_pct,
+}
 
-st.info(generate_explanation(summary_text))
+if os.getenv("GOOGLE_API_KEY"):
+    st.caption(
+        "GenAI explanations are enabled via `GOOGLE_API_KEY`. "
+        "No automated decisions or enforcement are performed."
+    )
+else:
+    st.caption(
+        "GenAI explanations are disabled (no `GOOGLE_API_KEY`). "
+        "A deterministic fallback summary is shown."
+    )
+
+genai_text = None
+if metrics and metrics.get("genai_summary"):
+    genai_text = metrics["genai_summary"]
+else:
+    genai_text = generate_explanation(summary_payload)
+
+st.info(genai_text)

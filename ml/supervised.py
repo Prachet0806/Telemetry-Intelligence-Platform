@@ -16,10 +16,15 @@ def train_supervised_model(X, y) -> Tuple[Any, Dict[str, Any]]:
         X, y, test_size=0.3, random_state=42
     )
 
-    model = LogisticRegression(max_iter=500)
+    model = LogisticRegression(max_iter=500, class_weight="balanced")
     model.fit(X_train, y_train)
 
     y_pred = model.predict(X_test)
-    report = classification_report(y_test, y_pred, output_dict=True)
+    report = classification_report(
+        y_test,
+        y_pred,
+        output_dict=True,
+        zero_division=0,
+    )
 
     return model, report

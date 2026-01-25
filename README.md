@@ -43,7 +43,7 @@ Dashboard (Streamlit)
 ## Project Structure
 
 ```
-ai-telemetry-intelligence/
+telemetry-intelligence-platform/
 │
 ├── data/
 │   ├── raw/                  # Raw telemetry input (JSON)
@@ -229,7 +229,6 @@ Future enhancements could include:
 * Model drift detection
 * Role-based dashboards
 * CI/CD and data quality metrics
-* Real GenAI integration behind a feature flag
 
 All extensions would preserve **human-in-the-loop governance**.
 
