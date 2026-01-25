@@ -1,0 +1,22 @@
+# Core data & analytics
+pandas==2.2.2
+numpy==1.26.4
+pyarrow==15.0.2
+
+# Machine Learning
+scikit-learn==1.4.2
+joblib==1.4.2
+
+# Dashboard / UI
+streamlit==1.35.0
+
+# Configuration & utilities
+pyyaml==6.0.1
+python-dotenv==1.0.1
+
+# Optional (future GenAI integration)
+# google-genai>=0.4.0
+# openai>=1.0.0
+
+# GenAI
+google-genai==0.4.0

@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor
+.vscode/
+
+# Data artifacts
+data/processed/
+data/raw/telemetry_logs.json
+
+# Model artifacts
+*.joblib
+
+# Secrets
+.env
