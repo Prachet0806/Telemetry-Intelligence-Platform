@@ -1,0 +1,26 @@
+# config/playbooks.yaml
+# Operational playbooks mapped to severity levels.
+# Loaded by decision/playbook_registry.py and decision/action_recommender.py
+
+playbooks:
+  Critical:
+    - "Temporarily suspend all high-risk service accounts"
+    - "Trigger P1 security incident response"
+    - "Escalate to CISO and engineering leadership"
+    - "Initiate privileged access review"
+    - "Activate enhanced audit logging across all regions"
+
+  High:
+    - "Increase monitoring frequency to every 5 minutes"
+    - "Review all IAM changes in the past 24 hours"
+    - "Notify security analyst on-call"
+    - "Freeze non-essential privileged operations"
+
+  Moderate:
+    - "Enable enhanced logging for flagged service accounts"
+    - "Schedule security analyst review within 4 hours"
+    - "Document findings in the incident tracking system"
+
+  Low:
+    - "No immediate action required"
+    - "Continue standard monitoring cadence"

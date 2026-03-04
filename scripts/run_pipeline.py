@@ -23,6 +23,13 @@ from ml.evaluation import evaluate_against_baseline
 from explainability.genai_explainer import generate_explanation
 from scripts.generate_mock_telemetry import generate_dataset
 
+# Decision Intelligence Layer
+from decision.decision_context import DecisionContext
+from decision.severity_engine import determine_severity
+from decision.impact_estimator import estimate_impact
+from decision.action_recommender import recommend_actions
+from reporting.client_brief_builder import build_client_brief
+
 # -------------------------------------------------------------------
 # Paths
 # -------------------------------------------------------------------
@@ -152,6 +159,40 @@ metrics["baseline_vs_supervised"] = (
         )
     }
 )
+
+# -------------------------------------------------------------------
+# Decision Intelligence Layer
+# -------------------------------------------------------------------
+
+print("[INFO] Running Decision Intelligence Layer...")
+
+ctx = DecisionContext(
+    baseline_flag_rate=float(metrics["baseline"]["positive_rate"]),
+    anomaly_rate=float(metrics["unsupervised"]["anomaly_rate"]),
+    supervised_precision=(
+        metrics["supervised"].get("weighted avg", {}).get("precision")
+        if isinstance(metrics["supervised"], dict)
+        else None
+    ),
+    supervised_recall=(
+        metrics["supervised"].get("weighted avg", {}).get("recall")
+        if isinstance(metrics["supervised"], dict)
+        else None
+    ),
+    high_risk_percentage=summary_payload["high_risk_percentage"],
+    total_events=summary_payload["total_events"],
+)
+
+severity = determine_severity(ctx)
+impact   = estimate_impact(ctx)
+actions  = recommend_actions(severity)
+brief    = build_client_brief(severity, impact, actions, ctx)
+
+metrics["decision_intelligence"] = brief
+
+print(f"[DECISION] Severity  : {severity}")
+print(f"[DECISION] Exposure  : ${impact:,.2f}")
+print(f"[DECISION] Actions   : {len(actions)} recommended")
 
 with open(METRICS_PATH, "w") as f:
     json.dump(metrics, f, indent=2)

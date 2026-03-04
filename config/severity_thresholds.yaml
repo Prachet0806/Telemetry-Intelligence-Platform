@@ -1,0 +1,15 @@
+# config/severity_thresholds.yaml
+# Thresholds used by decision/severity_engine.py
+# Adjust these values to tune sensitivity without code changes.
+
+thresholds:
+  critical:
+    high_risk_percentage: 20   # % of events labelled high-risk
+    anomaly_rate: 0.15         # fraction flagged by unsupervised model
+  high:
+    high_risk_percentage: 10
+    anomaly_rate: null         # not evaluated at this tier
+  moderate:
+    high_risk_percentage: null
+    anomaly_rate: 0.08
+  # Everything below these thresholds is classified as Low

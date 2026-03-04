@@ -1,0 +1,18 @@
+# config/impact_model.yaml
+# Parameters used by decision/impact_estimator.py
+# All costs are in USD. Adjust multipliers to reflect your organisation's risk appetite.
+
+impact_model:
+  base_cost: 100000              # baseline operational incident cost (USD)
+
+  multipliers:
+    high_risk_pct_threshold: 15  # if high_risk_percentage > this, apply multiplier
+    high_risk_pct_multiplier: 3.0
+
+    anomaly_rate_threshold: 0.10 # if anomaly_rate > this, apply multiplier
+    anomaly_rate_multiplier: 2.0
+
+    large_event_volume: 1000     # if total_events > this, apply multiplier
+    large_event_multiplier: 1.5
+
+    admin_scope_multiplier: 4.0  # applied when is_admin_scope signals are present
