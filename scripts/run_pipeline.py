@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from ingestion.load_logs import load_telemetry
+from ingestion.source_router import load_telemetry_auto
 from processing.feature_engineering import engineer_features
 from processing.baseline_rules import apply_baseline_rules
 from ml.supervised import train_supervised_model
@@ -59,8 +59,8 @@ if not RAW_PATH.exists():
 # Ingestion
 # -------------------------------------------------------------------
 
-df, ingest_stats = load_telemetry(
-    str(RAW_PATH),
+df, ingest_stats = load_telemetry_auto(
+    raw_path=str(RAW_PATH),
     rejected_path=str(REJECTED_PATH),
 )
 
@@ -70,6 +70,7 @@ if df.empty:
     )
 
 print("[INFO] Ingestion complete")
+print(f"        Data source    : {ingest_stats.get('data_source', 'local')}")
 print(f"        Total events   : {ingest_stats['total_events']}")
 print(f"        Valid events   : {ingest_stats['valid_events']}")
 print(f"        Invalid events : {ingest_stats['invalid_events']}")

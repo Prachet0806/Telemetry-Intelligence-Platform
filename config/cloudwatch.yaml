@@ -1,0 +1,26 @@
+# config/cloudwatch.yaml
+# AWS CloudWatch Logs ingestion settings.
+# All values here can be overridden by environment variables (see .env).
+
+cloudwatch:
+  # Name of the CloudWatch Log Group containing CloudTrail logs.
+  # Override with env var: CLOUDWATCH_LOG_GROUP
+  log_group_name: "CloudTrail/DefaultLogGroup"
+
+  # How many hours back to fetch events from CloudWatch.
+  lookback_hours: 24
+
+  # Maximum number of log events to fetch per pipeline run.
+  # CloudWatch paginates; this is the ceiling across all pages.
+  max_events: 5000
+
+  # Optional CloudWatch filter pattern (leave empty to fetch all events).
+  # Example: '{ $.eventName = "AttachRolePolicy" }'
+  filter_pattern: ""
+
+  # AWS region. Override with env var: AWS_DEFAULT_REGION
+  region: "us-east-1"
+
+  # Whether to cache fetched CloudWatch events to data/raw/telemetry_logs.json.
+  # Caching means the local fallback always has the most recently fetched real data.
+  cache_to_local: true

@@ -1,41 +1,49 @@
-# Telemetry Intelligence Platform
+# Enterprise Operational Decision Intelligence Platform
 
-## Overview
-
-The **Telemetry Intelligence Platform** is an end-to-end analytics pipeline that ingests cloud and security telemetry, applies deterministic rules and foundational machine learning, and produces **explainable, human-readable insights** for operational and governance use cases.
-
-The project is intentionally designed to emphasize:
-
-* **End-to-end correctness**
-* **Observability and guardrails**
-* **Responsible ML usage**
-* **Clear separation of concerns**
-* **Enterprise-style failure handling**
-
-Rather than focusing on real-time automation or advanced ML, the system prioritizes **interpretability, safety, and reliability**, aligning with expectations in regulated and large-scale environments.
+> *Evolved from a telemetry analytics system into a multi-stakeholder decision intelligence platform — detecting risks, estimating impact, recommending actions, and communicating to every audience.*
 
 ---
 
-## High-Level Architecture
+## Overview
+
+The **Enterprise Operational Decision Intelligence Platform** is an end-to-end pipeline that ingests cloud telemetry (real AWS CloudWatch or local mock data), applies deterministic rules and ML, and produces **severity assessments, financial impact estimates, and operational playbook recommendations** for multiple stakeholder audiences.
+
+The system is designed around:
+
+* **Separation of concerns** — ingestion, processing, ML, decision, and reporting are fully independent layers
+* **Responsible ML** — ML is decision-support only; no automated enforcement
+* **Graceful degradation** — every layer has a safe fallback (CloudWatch → local → mock; GenAI → deterministic)
+* **Multi-stakeholder design** — the same pipeline serves Operations, Security, Executive, and Engineering audiences via purpose-built views
+
+---
+
+## Architecture
 
 ```
-Telemetry Logs (Mock / CloudTrail-style)
-        ↓
-Ingestion & Schema Validation
-        ↓
-Feature Engineering
-        ↓
-Baseline Rules (Deterministic)
-        ↓
-Machine Learning
-  ├─ Supervised (Known risk patterns)
-  └─ Unsupervised (Anomaly detection)
-        ↓
-Metrics & Artifact Persistence
-        ↓
-Explainability Layer (Optional GenAI)
-        ↓
-Dashboard (Streamlit)
+Data Source (CloudWatch or Local)
+ ↓
+ Source Router (auto-selects best source, fallback chain)
+ ↓
+ Schema Validation & Ingestion
+ ↓
+ Feature Engineering
+ ↓
+ Baseline Rules (Deterministic) ML Detection
+ (admin IAM, resource spike, etc.) (Supervised + Unsupervised)
+ ↓ ↓
+ └──────────────┬─────────────────────┘
+ ↓
+ Decision Intelligence Layer
+ ├─ Severity Engine (Low / Moderate / High / Critical)
+ ├─ Impact Estimator (USD exposure estimate)
+ ├─ Action Recommender (YAML-driven playbooks)
+ └─ Client Brief Builder (structured decision brief)
+ ↓
+ Stakeholder-Specific Outputs
+ ├─ Operations — Runbook checklist + urgency
+ ├─ Security — Threat signals + model metrics
+ ├─ Executive — Risk posture + exposure + GenAI narrative
+ └─ ⚙ Technical — Full pipeline + ML diagnostics
 ```
 
 ---
@@ -43,151 +51,220 @@ Dashboard (Streamlit)
 ## Project Structure
 
 ```
-telemetry-intelligence-platform/
+ai-telemetry-intelligence/
+│
+├── config/ ← Runtime configuration (no secrets)
+│ ├── severity_thresholds.yaml ← Signal → severity mapping
+│ ├── impact_model.yaml ← Financial exposure multipliers
+│ ├── playbooks.yaml ← Severity → action lists
+│ └── cloudwatch.yaml ← AWS log group, lookback, region
 │
 ├── data/
-│   ├── raw/                  # Raw telemetry input (JSON)
-│   ├── processed/            # Features, metrics, models, rejected events
+│ ├── raw/ ← Telemetry input (JSON)
+│ └── processed/ ← Features, models, metrics, rejects
 │
-├── ingestion/                # Loading + schema validation
-├── processing/               # Feature engineering + baseline rules
-├── ml/                       # Supervised & unsupervised ML
-├── explainability/           # AI explainability (optional GenAI)
-├── dashboard/                # Streamlit UI
-├── scripts/                  # Orchestration & data generation
+├── ingestion/
+│ ├── load_logs.py ← Core JSON loader + schema validation
+│ ├── validate_schema.py ← Field-level schema enforcement
+│ ├── cloudwatch_connector.py ← boto3 CloudWatch fetcher (paginated)
+│ ├── cloudwatch_normalizer.py ← CloudTrail → internal schema mapping
+│ └── source_router.py ← Fallback orchestrator (CW → local → mock)
+│
+├── processing/
+│ ├── feature_engineering.py ← Behavioral + temporal features
+│ └── baseline_rules.py ← Deterministic risk heuristics
+│
+├── ml/
+│ ├── supervised.py ← Random Forest risk classifier
+│ ├── unsupervised.py ← Isolation Forest anomaly detection
+│ └── evaluation.py ← Baseline vs ML comparison
+│
+├── decision/ ← Decision Intelligence Layer
+│ ├── decision_context.py ← DecisionContext dataclass (signal snapshot)
+│ ├── severity_engine.py ← Threshold-based severity assessment
+│ ├── impact_estimator.py ← Heuristic financial exposure model
+│ ├── action_recommender.py ← Playbook lookup by severity
+│ └── playbook_registry.py ← Loads + caches playbooks.yaml
+│
+├── reporting/
+│ ├── client_brief_builder.py ← Consulting-grade structured brief
+│ ├── stakeholder_views.py ← Four audience-specific adapters
+│ └── narrative_generator.py ← GenAI or deterministic narrative
+│
+├── explainability/
+│ ├── genai_explainer.py ← Gemini API wrapper (optional)
+│ └── prompt_templates.py ← EXPLANATION_PROMPT + DECISION_NARRATIVE_PROMPT
+│
+├── dashboard/
+│ ├── app.py ← Home page (hero + source badge + nav)
+│ ├── components/
+│ │ ├── severity_card.py ← Colour-coded risk badge
+│ │ ├── impact_card.py ← USD exposure metric
+│ │ ├── action_panel.py ← Interactive runbook checklist
+│ │ └── metrics_table.py ← Ingestion / ML metric tables
+│ └── pages/
+│ ├── 1_Operations.py ← SRE / Platform engineering view
+│ ├── 2_Security.py ← SOC / Security engineering view
+│ ├── 3_Executive.py ← C-Suite / Board view
+│ └── 4_Technical.py ← Engineering / ML diagnostics
+│
+├── scripts/
+│ ├── run_pipeline.py ← End-to-end pipeline orchestrator
+│ └── generate_mock_telemetry.py ← Synthetic CloudTrail-style data
+│
+├── .env.example ← Credential template (safe to commit)
 ├── requirements.txt
 └── README.md
 ```
 
 ---
 
-## Telemetry Model
+## Telemetry Schema
 
-Each telemetry event follows a strict schema:
+All events (from CloudWatch or mock generator) conform to this internal schema:
 
 ```json
 {
-  "event_id": "string",
-  "timestamp": "ISO-8601",
-  "event_type": "auth | iam_change | api_call",
-  "actor_type": "human | service",
-  "actor_id": "string",
-  "region": "string",
-  "resource_type": "string",
-  "action": "string",
-  "risk_level": "low | medium | high",
-  "metadata": {
-    "policy_scope": "read | write | admin",
-    "resource_count": "integer",
-    "login_success": "boolean"
-  }
+ "event_id": "string (UUID)",
+ "timestamp": "ISO-8601 UTC",
+ "event_type": "auth | iam_change | api_call",
+ "actor_type": "human | service",
+ "actor_id": "string",
+ "source_ip": "string",
+ "region": "string",
+ "resource_type":"string",
+ "action": "string (CloudTrail eventName or mock action)",
+ "risk_level": "low | medium | high",
+ "metadata": {
+ "policy_scope": "read | write | admin",
+ "resource_count": "integer",
+ "login_success": "boolean"
+ }
 }
 ```
 
-Mock data is used to ensure:
-
-* Reproducibility
-* No dependency on live cloud credentials
-* Safe experimentation
+CloudTrail events are normalized to this schema automatically via `cloudwatch_normalizer.py`.
 
 ---
 
-## End-to-End Workflow
+## Data Sources & Fallback Chain
 
-1. **Data Generation (Optional)**
+The pipeline automatically selects the best available data source:
 
-   * Synthetic telemetry is generated if no raw data exists.
+```
+1. AWS CloudWatch Logs (if credentials + log group reachable)
+ ↓ fail
+2. Local JSON file (data/raw/telemetry_logs.json — cached real or mock data)
+ ↓ missing
+3. Auto-generated mock (generate_mock_telemetry.py — always works, no credentials)
+```
 
-2. **Ingestion & Validation**
-
-   * Each event is schema-validated.
-   * Invalid events are tracked, categorized, and optionally persisted.
-   * Ingestion statistics are recorded.
-
-3. **Feature Engineering**
-
-   * Raw logs are converted into behavioral, ML-ready features.
-
-4. **Baseline Rules**
-
-   * Deterministic heuristics flag obvious risk patterns.
-   * Provides a non-ML safety baseline.
-
-5. **Machine Learning**
-
-   * **Supervised ML** reinforces known risk patterns (precision-oriented).
-   * **Unsupervised ML** detects anomalous behavior.
-   * Supervised training is safely skipped if labels lack diversity.
-
-6. **Metrics & Artifacts**
-
-   * Features, models, and metrics are persisted for downstream use.
-
-7. **Explainability**
-
-   * Optional GenAI layer converts metrics into plain-English summaries.
-   * Falls back to a safe message if no API key is configured.
-
-8. **Dashboard**
-
-   * Displays telemetry volume, risk distribution, and pipeline metrics.
-   * Fails gracefully if the pipeline has not been run.
+The dashboard displays a source badge on every page:
+- **Live Data** — AWS CloudWatch
+- **Local Data** — Cached / fallback
+- ⚪ **Mock Data** — Auto-generated
 
 ---
 
-## Machine Learning Philosophy
+## Decision Intelligence Layer
 
-The ML layer is **decision-support only**.
+After ML detection, a dedicated layer translates signals into business decisions.
 
-* ML augments deterministic logic; it does not replace it.
-* Outputs are validated against baseline rules.
-* No automated remediation or enforcement exists.
-* Supervised learning is guarded against single-class failure cases.
+### Severity Engine (`decision/severity_engine.py`)
 
-This mirrors how ML is typically used in **governance, security, and risk analytics**.
+Reads thresholds from `config/severity_thresholds.yaml`:
+
+| Level | When triggered |
+|---|---|
+| **Critical** | High-risk % > 20% or anomaly rate > 15% |
+| **High** | High-risk % > 10% |
+| **Moderate** | Anomaly rate > 8% |
+| **Low** | All signals below thresholds |
+
+### Impact Estimator (`decision/impact_estimator.py`)
+
+Applies heuristic multipliers from `config/impact_model.yaml` to a base operational incident cost to produce an estimated financial exposure in USD.
+
+### Action Recommender (`decision/action_recommender.py`)
+
+Looks up severity in `config/playbooks.yaml` and returns the relevant operational runbook. **No code change required to update action lists** — just edit the YAML.
+
+### Client Brief (`reporting/client_brief_builder.py`)
+
+Produces a structured brief consumed by all stakeholder views and GenAI narratives:
+
+```json
+{
+ "Executive Summary": "Operational telemetry indicates HIGH risk posture...",
+ "Severity": "High",
+ "Estimated Financial Exposure": "$600,000.00",
+ "Recommended Actions": ["...", "..."],
+ "Confidence Level": "High (multi-signal validation)",
+ "Signal Summary": { ... }
+}
+```
 
 ---
 
-## Explainability & Responsible AI
+## Dashboard
 
-* GenAI is used **only for explanation**, not decisions.
-* GenAI is **optional** and gated by `GOOGLE_API_KEY`.
-* The interface contract supports future model changes without altering pipeline semantics.
+Launch with:
+```bash
+streamlit run dashboard/app.py
+```
+
+| Page | Audience | Key Components |
+|---|---|---|
+| **Home** | All | Decision brief hero, source badge, navigation |
+| ** Operations** | SRE / Platform Eng | Severity card, action checklist, urgency window |
+| ** Security** | SOC / Security Eng | Detection charts, model report, feature explorer |
+| ** Executive** | C-Suite / Board | Risk level, exposure, GenAI consulting narrative |
+| **⚙ Technical** | Engineering / ML | Full metrics, label distribution, raw JSON |
 
 ---
 
-## Running the Project
+## Quick Start
 
-### 1. Install Dependencies
+### 1. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure GenAI (optional)
-
-Create a `.env` file in the project root:
+### 2. Configure environment
 
 ```bash
-GOOGLE_API_KEY=your_api_key_here
+cp .env.example .env
+# Fill in GOOGLE_API_KEY and/or AWS credentials (all optional)
 ```
 
-If not set, the dashboard will display a safe fallback message instead of
-an AI-generated explanation.
+| Variable | Required | Purpose |
+|---|---|---|
+| `GOOGLE_API_KEY` | Optional | Enables GenAI consulting narratives |
+| `AWS_ACCESS_KEY_ID` | Optional | Activates live CloudWatch ingestion |
+| `AWS_SECRET_ACCESS_KEY` | Optional | Activates live CloudWatch ingestion |
+| `AWS_DEFAULT_REGION` | Optional | Default: `us-east-1` |
+| `CLOUDWATCH_LOG_GROUP` | Optional | Default: `CloudTrail/DefaultLogGroup` |
 
-### 3. Run the Pipeline
+### 3. Run the pipeline
 
 ```bash
 python scripts/run_pipeline.py
 ```
 
-This will:
+Output:
+```
+[SOURCE] Using local fallback data. ← or "cloudwatch"
+[INFO] Ingestion complete
+ Data source : local
+ Total events : 10000
+[DECISION] Severity : High
+[DECISION] Exposure : $600,000.00
+[DECISION] Actions : 4 recommended
+[SUCCESS] Pipeline executed successfully
+```
 
-* Generate telemetry if missing
-* Run ingestion, processing, ML
-* Persist features, metrics, and models
-
-### 4. Launch the Dashboard
+### 4. Launch the dashboard
 
 ```bash
 streamlit run dashboard/app.py
@@ -195,40 +272,50 @@ streamlit run dashboard/app.py
 
 ---
 
-## Outputs & Artifacts
+## Artifacts
 
-After a successful run, `data/processed/` will contain:
+After a successful run, `data/processed/` contains:
 
-* `features.parquet` — feature-engineered dataset
-* `metrics.json` — ingestion, baseline, and ML metrics
-* `supervised_model.joblib` — trained model (if applicable)
-* `unsupervised_model.joblib`
-* `rejected_events.json` — invalid telemetry (if any)
+| File | Contents |
+|---|---|
+| `features.parquet` | Engineered feature dataset |
+| `metrics.json` | Ingestion, ML, and `decision_intelligence` block |
+| `supervised_model.joblib` | Trained risk classifier (if label variety sufficient) |
+| `unsupervised_model.joblib` | Isolation Forest anomaly detector |
+| `rejected_events.json` | Schema-invalid events (if any) |
 
----
-
-## Known Limitations
-
-* Telemetry is synthetic and may not capture all real-world edge cases
-* Risk labels are rule-derived, not human-curated
-* No real-time or streaming ingestion
-* No automated remediation
-* GenAI explainability is optional and depends on API availability
-
-These constraints are **intentional** to preserve clarity, safety, and reviewability.
+`metrics.json` structure (top-level keys):
+```
+ingestion • baseline • unsupervised • supervised •
+genai_summary • baseline_vs_supervised • decision_intelligence
+```
 
 ---
 
-## Extension Plan (High-Level)
+## AWS IAM Requirements (CloudWatch mode)
 
-Future enhancements could include:
+The IAM user or role must have:
 
-* Real CloudTrail ingestion via S3
-* Entity-level behavioral baselining (UEBA)
-* Streaming ingestion (optional)
-* Model drift detection
-* Role-based dashboards
-* CI/CD and data quality metrics
+```json
+{
+ "Effect": "Allow",
+ "Action": [
+ "logs:FilterLogEvents",
+ "logs:DescribeLogGroups"
+ ],
+ "Resource": "arn:aws:logs:*:*:log-group:CloudTrail/*"
+}
+```
 
-All extensions would preserve **human-in-the-loop governance**.
+---
 
+## Design Principles
+
+| Principle | How it's applied |
+|---|---|
+| **No automated enforcement** | ML and decision layer are advisory only |
+| **Graceful fallback everywhere** | CloudWatch → local → mock; GenAI → deterministic |
+| **Config over code** | Thresholds, multipliers, and playbooks are YAML files |
+| **Audience-aware outputs** | Same pipeline, four distinct stakeholder views |
+| **Interpretable decisions** | Cost model and severity rules use explicit formulas, not ML |
+| **Human-in-the-loop** | Every page includes confidence levels and review reminders |

@@ -57,6 +57,33 @@ def run_pipeline():
         check=True,
     )
 
+
+def render_source_badge(data_source: str) -> None:
+    """Render a colour-coded data source pill in the sidebar and inline."""
+    if data_source == "cloudwatch":
+        badge_html = (
+            '<span style="background:#16a34a;color:white;padding:3px 10px;'
+            'border-radius:999px;font-size:0.82rem;font-weight:600;">'
+            '🟢 Live Data &nbsp;|&nbsp; AWS CloudWatch</span>'
+        )
+    elif data_source == "mock":
+        badge_html = (
+            '<span style="background:#6b7280;color:white;padding:3px 10px;'
+            'border-radius:999px;font-size:0.82rem;font-weight:600;">'
+            '⚪ Mock Data &nbsp;|&nbsp; Auto-generated</span>'
+        )
+    else:
+        badge_html = (
+            '<span style="background:#ca8a04;color:white;padding:3px 10px;'
+            'border-radius:999px;font-size:0.82rem;font-weight:600;">'
+            '🟡 Local Data &nbsp;|&nbsp; Cached / fallback</span>'
+        )
+    st.markdown(badge_html, unsafe_allow_html=True)
+    with st.sidebar:
+        st.markdown("**Data Source**")
+        st.markdown(badge_html, unsafe_allow_html=True)
+        st.divider()
+
 # -------------------------------------------------------------------
 # First-run handling
 # -------------------------------------------------------------------
@@ -95,6 +122,7 @@ if METRICS_PATH.exists():
         metrics = json.load(f)
 
 di = (metrics or {}).get("decision_intelligence", {})
+data_source = (metrics or {}).get("ingestion", {}).get("data_source", "local")
 
 # -------------------------------------------------------------------
 # Page header
@@ -105,6 +133,7 @@ st.caption(
     "Multi-signal telemetry analysis → severity assessment → impact estimation → "
     "stakeholder-specific operational guidance"
 )
+render_source_badge(data_source)
 st.divider()
 
 # -------------------------------------------------------------------
