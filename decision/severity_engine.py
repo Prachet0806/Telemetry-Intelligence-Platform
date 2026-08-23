@@ -21,8 +21,9 @@ def determine_severity(ctx: DecisionContext) -> str:
     """
     Translate pipeline signals into a business severity label.
 
-    Evaluation order: Critical → High → Moderate → Low
-    Thresholds are read from config/severity_thresholds.yaml.
+    Evaluation order: Critical → High → Moderate → Low.
+    Thresholds are read from config/severity_thresholds.yaml. Any tier key
+    set to null is skipped, so tiers can key off any subset of signals.
 
     Returns
     -------
@@ -30,19 +31,27 @@ def determine_severity(ctx: DecisionContext) -> str:
     """
     t = _load_thresholds()
 
+    def _above(tier: dict, signal: str, value: float | None) -> bool:
+        threshold = tier.get(signal)
+        return value is not None and threshold is not None and value > threshold
+
     # Critical: any single trigger is enough
     if (
-        ctx.high_risk_percentage > t["critical"]["high_risk_percentage"]
-        or ctx.anomaly_rate > t["critical"]["anomaly_rate"]
+        _above(t["critical"], "high_risk_percentage", ctx.high_risk_percentage)
+        or _above(t["critical"], "anomaly_rate", ctx.anomaly_rate)
+        or _above(t["critical"], "admin_scope_rate", ctx.admin_scope_rate)
     ):
         return "Critical"
 
     # High: high-risk % threshold only
-    if ctx.high_risk_percentage > t["high"]["high_risk_percentage"]:
+    if _above(t["high"], "high_risk_percentage", ctx.high_risk_percentage):
         return "High"
 
-    # Moderate: anomaly rate threshold only
-    if ctx.anomaly_rate > t["moderate"]["anomaly_rate"]:
+    # Moderate: anomaly rate or sustained elevated privileged activity
+    if (
+        _above(t["moderate"], "anomaly_rate", ctx.anomaly_rate)
+        or _above(t["moderate"], "admin_scope_rate", ctx.admin_scope_rate)
+    ):
         return "Moderate"
 
     return "Low"

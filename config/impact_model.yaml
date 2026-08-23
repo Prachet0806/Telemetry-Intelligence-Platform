@@ -15,4 +15,15 @@ impact_model:
     large_event_volume: 1000     # if total_events > this, apply multiplier
     large_event_multiplier: 1.5
 
-    admin_scope_multiplier: 4.0  # applied when is_admin_scope signals are present
+    admin_scope_threshold: 0.05  # if admin_scope_rate > this, apply multiplier
+    admin_scope_multiplier: 4.0  # applied when admin-scope activity is elevated
+
+  # USD ceilings per severity tier. The raw multiplier product can drift far
+  # from the assessed severity (e.g. background admin activity quadrupling a
+  # LOW-severity run); caps keep the reported exposure coherent with the
+  # tier in the client brief. Use null for no cap (Critical is uncapped).
+  impact_caps:
+    critical: null               # uncapped
+    high: 2000000
+    moderate: 750000
+    low: 250000

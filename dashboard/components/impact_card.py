@@ -12,13 +12,13 @@ def render_impact_card(impact: float, severity: str) -> None:
     impact : float
         Raw USD exposure value from impact_estimator.
     severity : str
-        Used to colour the delta indicator.
+        Used for the informational caption.
     """
     delta_map = {
-        "Critical": "⬆ Critical exposure — immediate containment recommended",
-        "High":     "⬆ High exposure — urgent review required",
-        "Moderate": "⚠ Moderate exposure — monitor and schedule review",
-        "Low":      "✓ Low exposure — within acceptable operational range",
+        "Critical": "Critical exposure — immediate containment recommended",
+        "High":     "High exposure — urgent review required",
+        "Moderate": "Moderate exposure — monitor and schedule review",
+        "Low":      "Low exposure — within acceptable operational range",
     }
     delta_text = delta_map.get(severity, "")
 
@@ -27,8 +27,7 @@ def render_impact_card(impact: float, severity: str) -> None:
         st.metric(
             label="💰 Estimated Financial Exposure",
             value=f"${impact:,.0f}",
-            delta=delta_text,
-            delta_color="inverse" if severity in ("Critical", "High") else "normal",
+            help=delta_text,  # use tooltip instead of misusing delta
         )
     with col2:
         st.caption(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from decision.decision_context import DecisionContext
 
 
@@ -39,10 +41,17 @@ def build_client_brief(
       - Confidence Level
       - Signal Summary
     """
+    review_guidance = {
+        "Critical": "Immediate escalation and review are required.",
+        "High": "Urgent review is required.",
+        "Moderate": "Scheduled review is recommended within 24 hours.",
+        "Low": "No immediate review required; continue routine monitoring.",
+    }
+
     return {
         "Executive Summary": (
             f"Operational telemetry analysis indicates a {severity.upper()} risk posture. "
-            f"Immediate review is {'required' if severity in ('Critical', 'High') else 'recommended'}."
+            f"{review_guidance.get(severity, 'Human review is recommended.')}"
         ),
         "Severity": severity,
         "Estimated Financial Exposure": f"${impact:,.2f}",
@@ -55,4 +64,5 @@ def build_client_brief(
             "Baseline Flag Rate": f"{ctx.baseline_flag_rate:.1%}",
             "Total Events Analyzed": ctx.total_events,
         },
+        "Generated At": datetime.now(timezone.utc).isoformat(),
     }

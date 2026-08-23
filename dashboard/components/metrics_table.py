@@ -53,11 +53,34 @@ def render_supervised_report(metrics: dict) -> None:
 
 
 def render_baseline_comparison(metrics: dict) -> None:
-    """Render baseline vs supervised comparison."""
-    comp = metrics.get("baseline_vs_supervised")
+    """Render the held-out baseline-vs-supervised comparison."""
+    comp = metrics.get("baseline_evaluation")
     if not comp:
+        st.info("Held-out comparison unavailable — re-run the pipeline.")
         return
     if "warning" in comp:
         st.warning(comp["warning"])
     else:
-        st.json(comp)
+        scope = comp.get("evaluation_scope", "").replace("_", " ")
+        if n_pos := comp.get("n_positives"):
+            st.caption(
+                f"Scored on the held-out test split ({comp.get('n_samples', '?')} rows, "
+                f"{n_pos} positive)."
+            )
+        elif scope:
+            st.caption(f"Evaluation scope: {scope}.")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown("**Baseline Rules**")
+            rules = comp.get("baseline_rules", {})
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Precision", f"{rules.get('precision', 0):.3f}")
+            c2.metric("Recall", f"{rules.get('recall', 0):.3f}")
+            c3.metric("F1", f"{rules.get('f1', 0):.3f}")
+        with col_b:
+            st.markdown("**Supervised Model**")
+            sup = comp.get("supervised_model", {})
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Precision", f"{sup.get('precision', 0):.3f}")
+            c2.metric("Recall", f"{sup.get('recall', 0):.3f}")
+            c3.metric("F1", f"{sup.get('f1', 0):.3f}")

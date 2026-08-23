@@ -36,7 +36,10 @@ def is_cloudwatch_available(log_group: str, region: str) -> bool:
     try:
         session = _make_session(region)
         client = session.client("logs")
-        resp = client.describe_log_groups(logGroupNamePrefix=log_group, limit=1)
+        # logGroupNamePattern without wildcards is an exact match; using it
+        # instead of prefix+limit avoids false negatives when several log
+        # groups share a prefix (e.g. "CloudTrail/a", "CloudTrail/b").
+        resp = client.describe_log_groups(logGroupNamePattern=log_group, limit=1)
         groups = resp.get("logGroups", [])
         return any(g["logGroupName"] == log_group for g in groups)
     except Exception as exc:
@@ -95,7 +98,7 @@ def fetch_cloudwatch_events(
             kwargs["filterPattern"] = filter_pattern
 
         logger.info(
-            "Fetching CloudWatch events from '%s' (last %d hours, max %d)…",
+            "Fetching CloudWatch events from '%s' (last %d hours, max %d)...",
             log_group, lookback_hours, max_events,
         )
 

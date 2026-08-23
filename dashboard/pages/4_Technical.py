@@ -18,6 +18,8 @@ from dashboard.components.metrics_table import (
     render_supervised_report,
     render_baseline_comparison,
 )
+from decision.decision_context import DecisionContext
+from reporting.stakeholder_views import technical_view
 
 st.set_page_config(page_title="Technical | Decision Intelligence", layout="wide")
 
@@ -37,84 +39,76 @@ with open(METRICS_PATH) as f:
     metrics = json.load(f)
 
 df = pd.read_parquet(FEATURES_PATH)
+di = metrics.get("decision_intelligence", {})
+
+ctx = DecisionContext(
+    baseline_flag_rate=float(metrics.get("baseline", {}).get("positive_rate", 0)),
+    anomaly_rate=float(metrics.get("unsupervised", {}).get("anomaly_rate", 0)),
+    high_risk_percentage=di.get("Signal Summary", {}).get("High-Risk Event %", 0),
+    total_events=di.get("Signal Summary", {}).get("Total Events Analyzed", 0),
+    supervised_precision=di.get("Signal Summary", {}).get("Supervised Precision"),
+    supervised_recall=di.get("Signal Summary", {}).get("Supervised Recall"),
+)
+
+view = technical_view(di, ctx, metrics)
 
 # ---------------------------------------------------------------------------
-# Header
+# Render
 # ---------------------------------------------------------------------------
 
-st.title("⚙️ Technical Metrics")
-st.caption("Full pipeline telemetry, model evaluation, and feature diagnostics for engineering teams.")
+st.title(view["page_title"])
+st.caption(view["page_caption"])
 st.divider()
 
-# ---------------------------------------------------------------------------
 # Ingestion stats
-# ---------------------------------------------------------------------------
-
 st.subheader("📥 Ingestion Statistics")
 render_ingestion_metrics(metrics)
 
-# ---------------------------------------------------------------------------
 # Detection rates
-# ---------------------------------------------------------------------------
-
 st.divider()
 st.subheader("🔬 Detection Rates")
 render_detection_metrics(metrics)
 
-# ---------------------------------------------------------------------------
 # Label distribution
-# ---------------------------------------------------------------------------
-
 st.divider()
 st.subheader("🏷️ Label Distribution")
 label_counts = df["label_high_risk"].value_counts().rename({0: "Normal", 1: "High Risk"})
 st.bar_chart(label_counts)
 
-# ---------------------------------------------------------------------------
 # Supervised model report
-# ---------------------------------------------------------------------------
-
 st.divider()
 st.subheader("🤖 Supervised Model Report")
 render_supervised_report(metrics)
 
-# ---------------------------------------------------------------------------
 # Baseline comparison
-# ---------------------------------------------------------------------------
-
 st.divider()
 st.subheader("⚖️ Baseline vs Supervised Comparison")
 render_baseline_comparison(metrics)
 
-# ---------------------------------------------------------------------------
 # Decision intelligence signals (technical view)
-# ---------------------------------------------------------------------------
-
 st.divider()
 st.subheader("🧠 Decision Intelligence Signals")
-di = metrics.get("decision_intelligence", {})
-if di:
-    sig = di.get("Signal Summary", {})
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Anomaly Rate", sig.get("Anomaly Rate", "N/A"))
-    c2.metric("High-Risk %", sig.get("High-Risk Event %", "N/A"))
-    c3.metric("Baseline Rate", sig.get("Baseline Flag Rate", "N/A"))
-    c4.metric("Severity", di.get("Severity", "N/A"))
-    st.metric("Estimated Exposure", di.get("Estimated Financial Exposure", "N/A"))
-else:
-    st.info("Decision Intelligence data not yet available. Re-run the pipeline.")
+sig = di.get("Signal Summary", {})
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Anomaly Rate", sig.get("Anomaly Rate", "N/A"))
+c2.metric("High-Risk %", sig.get("High-Risk Event %", "N/A"))
+c3.metric("Baseline Rate", sig.get("Baseline Flag Rate", "N/A"))
+c4.metric("Severity", di.get("Severity", "N/A"))
+st.metric("Estimated Exposure", view["Estimated Exposure"])
 
-# ---------------------------------------------------------------------------
 # Full raw metrics (expandable)
-# ---------------------------------------------------------------------------
-
 st.divider()
 with st.expander("🗄️ Full Raw Metrics JSON"):
     st.json(metrics)
 
-# ---------------------------------------------------------------------------
-# Feature dataframe
-# ---------------------------------------------------------------------------
+# Pipeline metadata (audit trail)
+with st.expander("🧾 Pipeline Metadata (audit trail)"):
+    meta = metrics.get("run_metadata", {})
+    if meta:
+        st.json(meta)
+    else:
+        st.info("run_metadata not present — re-run the pipeline to capture an audit trail.")
 
+# Feature dataframe
 with st.expander("📋 Engineered Features DataFrame"):
     st.dataframe(df.head(100), use_container_width=True)

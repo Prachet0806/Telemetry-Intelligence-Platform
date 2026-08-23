@@ -4,7 +4,7 @@
 
 playbooks:
   Critical:
-    - "Temporarily suspend all high-risk service accounts"
+    - "Recommend temporarily suspending high-risk service accounts"
     - "Trigger P1 security incident response"
     - "Escalate to CISO and engineering leadership"
     - "Initiate privileged access review"

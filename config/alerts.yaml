@@ -1,0 +1,15 @@
+# config/alerts.yaml
+# Severity-based alerting configuration.
+# webhook_url can be overridden at runtime with the ALERT_WEBHOOK_URL env var.
+
+alerts:
+  # Master switch. Set to false to disable all alerting.
+  enabled: true
+
+  # Alert when severity meets or exceeds this tier.
+  # Valid values: Critical | High | Moderate | Low
+  min_severity: High
+
+  # Generic webhook URL (Slack / MS Teams / PagerDuty incoming webhook).
+  # Leave empty to disable, or set ALERT_WEBHOOK_URL in .env.
+  webhook_url: ""

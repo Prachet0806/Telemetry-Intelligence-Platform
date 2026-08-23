@@ -58,12 +58,27 @@ def _derive_actor_type(user_identity: dict) -> str:
 # Heuristic risk_level from CloudTrail fields
 # ---------------------------------------------------------------------------
 
+def _label_jitter(event_id: str) -> int:
+    """
+    Deterministic pseudo-noise in {-1, 0, +1} derived from the event id.
+
+    The same event always maps to the same value (stable across replays),
+    but the risk label stops being a pure function of the fields that also
+    become ML features. Without this, a classifier trained to predict
+    risk_level would simply re-derive this module's scoring rule and its
+    evaluation metrics would be meaningless.
+    """
+    digest = hashlib.sha256(event_id.encode()).hexdigest()
+    return int(digest, 16) % 3 - 1
+
+
 def _derive_risk_level(
     event_name: str,
     actor_type: str,
     policy_scope: str,
     resource_count: int,
     timestamp_hour: int,
+    event_id: str = "",
 ) -> str:
     score = 0
     if actor_type == "service":
@@ -76,6 +91,9 @@ def _derive_risk_level(
         score += 2
     if timestamp_hour < 6 or timestamp_hour > 22:
         score += 1
+
+    # Break label/feature circularity (see _label_jitter).
+    score += _label_jitter(event_id)
 
     if score >= 6:
         return "high"
@@ -117,6 +135,30 @@ _SOURCE_TO_RESOURCE = {
 
 def _derive_resource_type(event_source: str) -> str:
     return _SOURCE_TO_RESOURCE.get(event_source, "aws_resource")
+
+
+_ARRAY_PARAM_KEYS = (
+    "resources", "items", "members", "roles", "users", "groups",
+    "policyArnList", "userNameList", "groupNameList", "roleNameList",
+)
+
+
+def _extract_resource_count(request_params: dict | list | None) -> int:
+    """
+    Heuristically estimate how many resources an event touched.
+
+    CloudTrail requestParameters is usually a dict; count array-valued
+    fields that typically represent a set of resources. Falls back to 1.
+    """
+    if not request_params:
+        return 1
+    if isinstance(request_params, list):
+        return max(1, len(request_params))
+    for key in _ARRAY_PARAM_KEYS:
+        value = request_params.get(key)
+        if isinstance(value, list) and value:
+            return len(value)
+    return max(1, len(request_params))
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +210,7 @@ def normalize_cloudtrail_event(raw: dict[str, Any]) -> dict[str, Any] | None:
         resource_type = _derive_resource_type(event_source)
 
         # Extract resource count from request parameters heuristically
-        resource_count = len(request_params) if isinstance(request_params, list) else 1
+        resource_count = _extract_resource_count(request_params)
 
         # Parse timestamp hour for off-hours detection
         try:
@@ -182,7 +224,8 @@ def normalize_cloudtrail_event(raw: dict[str, Any]) -> dict[str, Any] | None:
         policy_scope = _derive_policy_scope(event_name, request_params)
 
         risk_level = _derive_risk_level(
-            event_name, actor_type, policy_scope, resource_count, ts_hour
+            event_name, actor_type, policy_scope, resource_count, ts_hour,
+            event_id=event_id,
         )
 
         return {

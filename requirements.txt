@@ -1,25 +1,23 @@
 # Core data & analytics
-pandas==2.2.2
-numpy==1.26.4
-pyarrow==15.0.2
+# Pins reflect the versions the pipeline is actually developed and verified
+# against (see run_metadata in metrics.json). Keep in sync with your venv.
+pandas==2.3.3
+numpy==2.2.6
+pyarrow==22.0.0
 
 # Machine Learning
-scikit-learn==1.4.2
-joblib==1.4.2
+scikit-learn==1.7.1
+joblib==1.5.1
 
 # Dashboard / UI
-streamlit==1.35.0
+streamlit==1.53.0
 
 # Configuration & utilities
-pyyaml==6.0.1
-python-dotenv==1.0.1
+pyyaml==6.0.2
+python-dotenv==1.2.1
 
-# Optional (future GenAI integration)
-# google-genai>=0.4.0
-# openai>=1.0.0
-
-# GenAI
-google-genai==0.4.0
+# GenAI (Gemini narratives & explanations)
+google-genai==1.58.0
 
 # AWS CloudWatch integration (optional -- fallback to local data if absent)
-boto3>=1.34.0
+boto3==1.42.16

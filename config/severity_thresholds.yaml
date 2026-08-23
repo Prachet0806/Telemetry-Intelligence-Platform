@@ -1,15 +1,25 @@
 # config/severity_thresholds.yaml
 # Thresholds used by decision/severity_engine.py
 # Adjust these values to tune sensitivity without code changes.
+#
+# UNITS: high_risk_percentage is a PERCENT (0-100); anomaly_rate and
+# admin_scope_rate are FRACTIONS (0-1).
+#
+# NOTE: anomaly_rate is pinned near `detection.contamination`
+# (config/detection.yaml) by Isolation Forest. Tune the pair together --
+# decision/config_validation.py enforces consistency between them.
 
 thresholds:
   critical:
     high_risk_percentage: 20   # % of events labelled high-risk
     anomaly_rate: 0.15         # fraction flagged by unsupervised model
+    admin_scope_rate: null     # not evaluated at this tier
   high:
     high_risk_percentage: 10
     anomaly_rate: null         # not evaluated at this tier
+    admin_scope_rate: null
   moderate:
     high_risk_percentage: null
     anomaly_rate: 0.08
+    admin_scope_rate: 0.20     # sustained elevated privileged activity
   # Everything below these thresholds is classified as Low

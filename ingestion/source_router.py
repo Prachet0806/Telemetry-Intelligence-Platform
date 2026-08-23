@@ -10,7 +10,9 @@ This is the single place responsible for the fallback chain:
   3. Local JSON file missing  →  generate fresh mock dataset
 
 The returned stats dict includes a 'data_source' key so the dashboard
-and pipeline logs can display which path was taken.
+and pipeline logs can display which path was taken. When the local cache
+originated from a previous CloudWatch fetch, `cache_age_hours` is included
+so the UI can show staleness.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +69,33 @@ def _resolve_config(cfg: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
+def _cache_meta_path(raw_path: str) -> Path:
+    """Sidecar metadata file path for the local cache."""
+    return Path(raw_path).with_suffix(".meta.json")
+
+
+def _write_cache_meta(raw_path: str, event_count: int) -> None:
+    """Write cache metadata with fetch timestamp and event count."""
+    meta = {
+        "source": "cloudwatch",
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "event_count": event_count,
+    }
+    meta_path = _cache_meta_path(raw_path)
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+
+def _read_cache_meta(raw_path: str) -> dict | None:
+    """Read cache metadata if present and valid."""
+    meta_path = _cache_meta_path(raw_path)
+    if not meta_path.exists():
+        return None
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # CloudWatch ingestion path
 # ---------------------------------------------------------------------------
@@ -106,12 +136,13 @@ def _fetch_and_normalize(cfg: dict[str, Any]) -> list[dict] | None:
 
 
 def _cache_events(events: list[dict], raw_path: str) -> None:
-    """Write normalized events to the local JSON cache."""
+    """Write normalized events to the local JSON cache + metadata sidecar."""
     path = Path(raw_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(events, f, indent=2)
     logger.info("Cached %d CloudWatch events → %s", len(events), raw_path)
+    _write_cache_meta(raw_path, len(events))
 
 
 # ---------------------------------------------------------------------------
@@ -140,11 +171,14 @@ def load_telemetry_auto(
 
     Returns
     -------
-    (df, stats) where stats includes 'data_source': 'cloudwatch' | 'local'.
+    (df, stats) where stats includes:
+      - 'data_source': 'cloudwatch' | 'local' | 'mock'
+      - 'cache_age_hours': float (only when data_source=='local' and cache came from CW)
     """
     cfg = _resolve_config(_load_cw_config())
     data_source = "local"
     cloudwatch_raw_count = 0
+    cache_age_hours = None
 
     # ------------------------------------------------------------------
     # Attempt 1: CloudWatch
@@ -157,7 +191,7 @@ def load_telemetry_auto(
             _cache_events(cw_events, raw_path)
         data_source = "cloudwatch"
         logger.info(
-            "[SOURCE] CloudWatch → %d events fetched and cached.", cloudwatch_raw_count
+            "[SOURCE] CloudWatch -> %d events fetched and cached.", cloudwatch_raw_count
         )
     else:
         logger.info("[SOURCE] Using local fallback data.")
@@ -172,12 +206,23 @@ def load_telemetry_auto(
         generate_dataset(output_path=raw_path)
         if data_source == "local":
             data_source = "mock"
+    else:
+        # Local file exists — check if it's a stale CW cache
+        meta = _read_cache_meta(raw_path)
+        if meta and meta.get("source") == "cloudwatch":
+            try:
+                fetched = datetime.fromisoformat(meta["fetched_at"].replace("Z", "+00:00"))
+                cache_age_hours = (datetime.now(timezone.utc) - fetched).total_seconds() / 3600
+            except Exception:
+                pass
 
     df, stats = load_telemetry(raw_path, rejected_path=rejected_path)
 
     # Enrich stats with source metadata
     stats["data_source"] = data_source
     stats["cloudwatch_raw_events"] = cloudwatch_raw_count
+    if cache_age_hours is not None:
+        stats["cache_age_hours"] = round(cache_age_hours, 1)
     if data_source == "cloudwatch":
         stats["cloudwatch_log_group"] = cfg["log_group_name"]
         stats["cloudwatch_region"]    = cfg["region"]

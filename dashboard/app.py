@@ -6,7 +6,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pandas as pd
@@ -54,11 +53,13 @@ def run_pipeline():
         cwd=str(PROJECT_ROOT),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=True,
     )
 
 
-def render_source_badge(data_source: str) -> None:
+def render_source_badge(data_source: str, cache_age_hours: float | None = None) -> None:
     """Render a colour-coded data source pill in the sidebar and inline."""
     if data_source == "cloudwatch":
         badge_html = (
@@ -73,11 +74,20 @@ def render_source_badge(data_source: str) -> None:
             '⚪ Mock Data &nbsp;|&nbsp; Auto-generated</span>'
         )
     else:
-        badge_html = (
-            '<span style="background:#ca8a04;color:white;padding:3px 10px;'
-            'border-radius:999px;font-size:0.82rem;font-weight:600;">'
-            '🟡 Local Data &nbsp;|&nbsp; Cached / fallback</span>'
-        )
+        # Local fallback — show cache age if we have it
+        if cache_age_hours is not None:
+            age_str = f"{cache_age_hours:.1f}h ago"
+            badge_html = (
+                f'<span style="background:#ca8a04;color:white;padding:3px 10px;'
+                f'border-radius:999px;font-size:0.82rem;font-weight:600;">'
+                f'🟡 Local Data &nbsp;|&nbsp; Cached from CloudWatch ({age_str})</span>'
+            )
+        else:
+            badge_html = (
+                '<span style="background:#ca8a04;color:white;padding:3px 10px;'
+                'border-radius:999px;font-size:0.82rem;font-weight:600;">'
+                '🟡 Local Data &nbsp;|&nbsp; Cached / fallback</span>'
+            )
     st.markdown(badge_html, unsafe_allow_html=True)
     with st.sidebar:
         st.markdown("**Data Source**")
@@ -103,7 +113,6 @@ if not FEATURES_PATH.exists():
                 result = run_pipeline()
                 st.success("Pipeline completed successfully.")
                 st.text_area("Pipeline Output", result.stdout, height=250)
-                time.sleep(1)
                 st.rerun()
             except subprocess.CalledProcessError as exc:
                 st.error("Pipeline execution failed.")
@@ -122,7 +131,9 @@ if METRICS_PATH.exists():
         metrics = json.load(f)
 
 di = (metrics or {}).get("decision_intelligence", {})
-data_source = (metrics or {}).get("ingestion", {}).get("data_source", "local")
+ingestion = (metrics or {}).get("ingestion", {})
+data_source = ingestion.get("data_source", "local")
+cache_age_hours = ingestion.get("cache_age_hours")
 
 # -------------------------------------------------------------------
 # Page header
@@ -133,7 +144,7 @@ st.caption(
     "Multi-signal telemetry analysis → severity assessment → impact estimation → "
     "stakeholder-specific operational guidance"
 )
-render_source_badge(data_source)
+render_source_badge(data_source, cache_age_hours)
 st.divider()
 
 # -------------------------------------------------------------------
@@ -205,7 +216,6 @@ if st.button("🔄 Re-run Pipeline", help="Re-run the full analytics pipeline to
         try:
             result = run_pipeline()
             st.success("Pipeline refreshed successfully.")
-            time.sleep(1)
             st.rerun()
         except subprocess.CalledProcessError as exc:
             st.error("Pipeline failed.")
