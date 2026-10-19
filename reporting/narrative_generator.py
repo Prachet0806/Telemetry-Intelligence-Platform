@@ -1,11 +1,31 @@
 # reporting/narrative_generator.py
 
 from __future__ import annotations
+
+import logging
 import os
 
-from dotenv import load_dotenv
+logger = logging.getLogger(__name__)
 
-load_dotenv()
+DEFAULT_GENAI_NARRATIVE_MODEL = "gemini-3.8-flash"
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(override=False)
+except Exception:
+    pass
+
+GENAI_NARRATIVE_MODEL = (
+    (os.getenv("GOOGLE_GENAI_MODEL") or "").strip()
+    or DEFAULT_GENAI_NARRATIVE_MODEL
+)
+
+
+def _sanitize(value, limit: int = 2000) -> str:
+    s = "" if value is None else str(value)
+    s = "".join(ch for ch in s if ch == "\n" or ch == "\t" or ord(ch) >= 32)
+    return s[:limit]
 
 
 def generate_decision_narrative(brief: dict) -> str:
@@ -24,10 +44,11 @@ def generate_decision_narrative(brief: dict) -> str:
     -------
     str — single coherent paragraph suitable for executive communication.
     """
-    severity = brief["Severity"]
-    exposure = brief["Estimated Financial Exposure"]
-    actions = brief["Recommended Actions"]
-    signals = brief.get("Signal Summary", {})
+    severity = _sanitize(brief.get("Severity", "Low"), 50)
+    exposure = _sanitize(brief.get("Estimated Financial Exposure", "N/A"), 100)
+    actions = brief.get("Recommended Actions", []) or []
+    actions = [_sanitize(a, 500) for a in actions][:10]
+    signals = brief.get("Signal Summary", {}) or {}
 
     # -----------------------------------------------------------------------
     # Deterministic fallback (always works, no API needed)
@@ -42,15 +63,19 @@ def generate_decision_narrative(brief: dict) -> str:
         f"Recommended immediate actions: {action_text}."
     )
 
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_key = (os.getenv("GOOGLE_API_KEY") or "").strip()
     if not api_key:
         return fallback
 
     # -----------------------------------------------------------------------
     # GenAI narrative (consulting-grade)
     # -----------------------------------------------------------------------
-    from explainability.prompt_templates import DECISION_NARRATIVE_PROMPT
-    from google import genai
+    try:
+        from explainability.prompt_templates import DECISION_NARRATIVE_PROMPT
+        from google import genai  # lazy import inside try so missing dep falls back
+    except ImportError as exc:
+        logger.warning("GenAI narrative unavailable (missing dependency): %s", exc)
+        return fallback
 
     prompt = DECISION_NARRATIVE_PROMPT.format(
         severity=severity,
@@ -65,9 +90,10 @@ def generate_decision_narrative(brief: dict) -> str:
     try:
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model=GENAI_NARRATIVE_MODEL,
             contents=prompt,
         )
-        return response.text or fallback
-    except Exception:
+        return (getattr(response, "text", "") or "").strip() or fallback
+    except Exception as exc:
+        logger.warning("GenAI narrative failed (%s); using fallback.", type(exc).__name__)
         return fallback

@@ -11,6 +11,7 @@ know about CloudTrail specifics.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from typing import Any
 
@@ -22,10 +23,13 @@ logger = logging.getLogger(__name__)
 
 _IAM_ACTIONS = {
     "AttachRolePolicy", "DetachRolePolicy", "CreateRole", "DeleteRole",
-    "UpdateRole", "CreateUser", "DeleteUser", "AttachUserPolicy",
-    "DetachUserPolicy", "PutRolePolicy", "PutUserPolicy", "CreateAccessKey",
+    "UpdateRole", "UpdateAssumeRolePolicy", "CreateUser", "DeleteUser",
+    "AttachUserPolicy", "DetachUserPolicy", "PutRolePolicy", "PutUserPolicy",
+    "DeleteRolePolicy", "DeleteUserPolicy", "CreateAccessKey",
     "UpdateAccessKey", "DeleteAccessKey", "CreateGroup", "AddUserToGroup",
-    "RemoveUserFromGroup",
+    "RemoveUserFromGroup", "CreatePolicy", "DeletePolicy", "AttachGroupPolicy",
+    "DetachGroupPolicy", "EnableMFADevice", "DeactivateMFADevice",
+    "UpdateLoginProfile", "DeleteLoginProfile",
 }
 
 _AUTH_ACTIONS = {
@@ -46,11 +50,16 @@ def _derive_event_type(event_name: str) -> str:
 # actor_type mapping
 # ---------------------------------------------------------------------------
 
-def _derive_actor_type(user_identity: dict) -> str:
+def _derive_actor_type(user_identity: dict | None) -> str:
     """Map CloudTrail userIdentity.type to platform actor_type."""
-    identity_type = user_identity.get("type", "").lower()
-    if identity_type in ("role", "assumerole", "federateduser", "webidentityuser"):
+    if not isinstance(user_identity, dict):
+        return "human"
+    identity_type = str(user_identity.get("type", "")).lower()
+    if identity_type in ("role", "assumerole", "assumedrole", "federateduser", "webidentityuser",
+                         "awsservice", "awsaccount"):
         return "service"
+    if identity_type == "root":
+        return "human"  # root is a human-privileged identity, scored via admin scope
     return "human"
 
 
@@ -108,12 +117,19 @@ def _derive_risk_level(
 
 def _derive_policy_scope(event_name: str, request_params: dict | None) -> str:
     """Infer policy scope from action name and request parameters."""
-    rp = request_params or {}
+    rp = request_params if isinstance(request_params, dict) else {}
     policy_arn = str(rp.get("policyArn", "")).lower()
 
-    if "administrat" in policy_arn or event_name in {"CreateRole", "AttachRolePolicy"}:
+    if "administrat" in policy_arn or event_name in {
+        "CreateRole", "AttachRolePolicy", "PutRolePolicy", "CreatePolicy",
+        "UpdateAssumeRolePolicy",
+    }:
         return "admin"
-    if "read" in policy_arn or event_name in {"GetObject", "ListBuckets"}:
+    if (
+        "read" in policy_arn
+        or event_name.startswith(("Describe", "List", "Get", "Head", "Search"))
+        or event_name in {"GetObject", "ListBuckets"}
+    ):
         return "read"
     return "write"
 
@@ -149,16 +165,24 @@ def _extract_resource_count(request_params: dict | list | None) -> int:
 
     CloudTrail requestParameters is usually a dict; count array-valued
     fields that typically represent a set of resources. Falls back to 1.
+    Never uses dict key-count as a resource proxy.
     """
     if not request_params:
         return 1
     if isinstance(request_params, list):
         return max(1, len(request_params))
+    if not isinstance(request_params, dict):
+        return 1
     for key in _ARRAY_PARAM_KEYS:
         value = request_params.get(key)
         if isinstance(value, list) and value:
-            return len(value)
-    return max(1, len(request_params))
+            return min(len(value), 1_000_000)
+    # Explicit single-resource fields
+    for key in ("roleName", "userName", "groupName", "policyArn", "bucketName",
+                "instanceId", "functionName"):
+        if request_params.get(key):
+            return 1
+    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -182,21 +206,29 @@ def normalize_cloudtrail_event(raw: dict[str, Any]) -> dict[str, Any] | None:
     dict matching the platform schema, or None if the event should be skipped.
     """
     try:
+        if not isinstance(raw, dict):
+            return None
         event_name    = raw.get("eventName", "")
         event_source  = raw.get("eventSource", "")
         aws_region    = raw.get("awsRegion", "us-east-1")
         source_ip     = raw.get("sourceIPAddress", "0.0.0.0")
         timestamp_str = raw.get("eventTime", "")
         user_identity = raw.get("userIdentity", {})
+        if not isinstance(user_identity, dict):
+            user_identity = {}
         request_params = raw.get("requestParameters") or {}
+        if not isinstance(request_params, (dict, list)):
+            request_params = {}
 
         if not event_name or not timestamp_str:
             return None
 
-        # Stable event_id from CloudTrail eventID, or derive one
-        event_id = raw.get("eventID") or hashlib.sha256(
-            f"{timestamp_str}{event_name}{source_ip}".encode()
-        ).hexdigest()[:36]
+        # Stable event_id: prefer CloudTrail eventID; otherwise hash the full
+        # canonical record (not just ts+name+ip, which collides on bulk calls).
+        event_id = raw.get("eventID")
+        if not event_id:
+            canonical = json.dumps(raw, sort_keys=True, separators=(",", ":"), default=str)
+            event_id = hashlib.sha256(canonical.encode()).hexdigest()[:36]
 
         actor_type = _derive_actor_type(user_identity)
         actor_id   = (
@@ -205,6 +237,8 @@ def normalize_cloudtrail_event(raw: dict[str, Any]) -> dict[str, Any] | None:
             or user_identity.get("accountId")
             or "unknown"
         )
+        if not isinstance(actor_id, str) or not actor_id:
+            actor_id = "unknown"
 
         event_type    = _derive_event_type(event_name)
         resource_type = _derive_resource_type(event_source)
@@ -212,21 +246,36 @@ def normalize_cloudtrail_event(raw: dict[str, Any]) -> dict[str, Any] | None:
         # Extract resource count from request parameters heuristically
         resource_count = _extract_resource_count(request_params)
 
-        # Parse timestamp hour for off-hours detection
+        # Parse timestamp hour for off-hours detection (fail-closed: skip
+        # events with unparseable timestamps rather than hiding signal).
         try:
             from datetime import datetime
             ts_hour = datetime.fromisoformat(
                 timestamp_str.replace("Z", "+00:00")
             ).hour
-        except ValueError:
-            ts_hour = 12
+        except (ValueError, AttributeError):
+            return None
 
-        policy_scope = _derive_policy_scope(event_name, request_params)
+        policy_scope = _derive_policy_scope(
+            event_name, request_params if isinstance(request_params, dict) else None
+        )
 
         risk_level = _derive_risk_level(
             event_name, actor_type, policy_scope, resource_count, ts_hour,
             event_id=event_id,
         )
+
+        # login_success is only meaningful for ConsoleLogin; otherwise None
+        # (conflating throttling errors with auth failures hid real signals).
+        if event_name == "ConsoleLogin":
+            response = raw.get("responseElements")
+            response_status = (
+                str(response.get("ConsoleLogin", "")).strip().lower()
+                if isinstance(response, dict) else ""
+            )
+            login_success = raw.get("errorCode") is None and response_status != "failure"
+        else:
+            login_success = True
 
         return {
             "event_id":      event_id,
@@ -242,14 +291,7 @@ def normalize_cloudtrail_event(raw: dict[str, Any]) -> dict[str, Any] | None:
             "metadata": {
                 "policy_scope":   policy_scope,
                 "resource_count": resource_count,
-                "login_success":  raw.get("errorCode") is None,
-            },
-            # Pass-through extra CloudTrail fields for enrichment
-            "_cloudtrail": {
-                "event_source":   event_source,
-                "error_code":     raw.get("errorCode"),
-                "error_message":  raw.get("errorMessage"),
-                "user_agent":     raw.get("userAgent"),
+                "login_success":  login_success,
             },
         }
 

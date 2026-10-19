@@ -1,0 +1,6 @@
+# config/scheduler.yaml
+scheduler:
+  enabled: false
+  interval_hours: 6
+  catchup_hours: 48
+  run_on_start: true

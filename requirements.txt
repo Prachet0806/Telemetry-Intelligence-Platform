@@ -21,3 +21,13 @@ google-genai==1.58.0
 
 # AWS CloudWatch integration (optional -- fallback to local data if absent)
 boto3==1.42.16
+
+# Delivery & ops (#16, #2, #12-export)
+fastapi==0.115.0
+uvicorn==0.30.0
+reportlab==4.2.0
+apscheduler==3.10.4
+
+# Drift KS-test (#8, optional — ml/drift.py falls back to empirical CDF distance)
+# Uncomment for exact scipy KS statistic:
+# scipy==1.14.1

@@ -20,14 +20,17 @@ from reporting.stakeholder_views import (
     render_common_header,
     render_confidence,
 )
+from dashboard.auth import require_page
+from reporting.run_store import latest_artifact_path
 
 st.set_page_config(page_title="Executive | Decision Intelligence", layout="wide")
+require_page(st, "Executive")
 
 # ---------------------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------------------
 
-METRICS_PATH = PROJECT_ROOT / "data" / "processed" / "metrics.json"
+METRICS_PATH = latest_artifact_path("metrics.json", PROJECT_ROOT / "data" / "processed")
 
 if not METRICS_PATH.exists():
     st.error("No pipeline output found. Run the pipeline first.")
@@ -67,6 +70,19 @@ render_impact_card(
     di.get("Estimated Financial Exposure Raw", 0.0),
     view["Enterprise Risk Level"],
 )
+
+# Sensitivity range (#12): low/high band already in the brief.
+st.divider()
+st.subheader("📐 Exposure Sensitivity")
+st.metric("Sensitivity Range", view.get("Exposure Range", "N/A"))
+_breakdown = view.get("Impact Breakdown") or {}
+if _breakdown.get("by_region"):
+    st.bar_chart(_breakdown["by_region"])
+    st.caption("Pro-rated exposure by region (shares from latest run).")
+if _breakdown.get("by_category"):
+    st.caption(f"By category: {_breakdown['by_category']}")
+if _breakdown.get("contributions"):
+    st.caption(f"Fired multipliers: {_breakdown['contributions']}")
 
 # Priority actions
 st.divider()

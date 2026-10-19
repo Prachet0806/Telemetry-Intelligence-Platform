@@ -13,3 +13,9 @@ alerts:
   # Generic webhook URL (Slack / MS Teams / PagerDuty incoming webhook).
   # Leave empty to disable, or set ALERT_WEBHOOK_URL in .env.
   webhook_url: ""
+
+  # Optional delivery settings (defaults in reporting/notifications.py):
+  # payload_format: slack | teams | pagerduty | generic (default: slack)
+  # retry_attempts: positive int (default: 3)
+  # retry_backoff_seconds: non-negative number (default: 2)
+  # pagerduty_routing_key: required when payload_format == pagerduty

@@ -4,6 +4,7 @@
 
 impact_model:
   base_cost: 100000              # baseline operational incident cost (USD)
+  sensitivity_pct: 0.25          # +/- range for min/max sensitivity (#12)
 
   multipliers:
     high_risk_pct_threshold: 15  # if high_risk_percentage > this, apply multiplier

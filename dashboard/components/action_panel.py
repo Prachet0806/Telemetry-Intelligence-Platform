@@ -4,10 +4,10 @@ import hashlib
 import streamlit as st
 
 
-def _stable_key(prefix: str, action: str) -> str:
-    """Generate a stable checkbox key from the action text."""
-    digest = hashlib.sha256(action.encode()).hexdigest()[:12]
-    return f"{prefix}_{digest}"
+def _stable_key(prefix: str, action: str, idx: int) -> str:
+    """Generate a stable checkbox key from index + action text."""
+    digest = hashlib.sha256(f"{idx}:{action}".encode()).hexdigest()[:12]
+    return f"{prefix}_{idx}_{digest}"
 
 
 def render_action_panel(actions: list[str], title: str = "Recommended Actions") -> None:
@@ -27,7 +27,7 @@ def render_action_panel(actions: list[str], title: str = "Recommended Actions") 
         return
 
     for i, action in enumerate(actions):
-        st.checkbox(action, key=_stable_key("action", action), value=False)
+        st.checkbox(str(action), key=_stable_key("action", str(action), i), value=False)
 
     st.caption(
         "Check off actions as they are completed. "
@@ -41,6 +41,6 @@ def render_urgent_actions(actions: list[str], n: int = 2) -> None:
     """
     st.subheader("⚡ Priority Actions")
     for action in actions[:n]:
-        st.error(f"▸ {action}")
+        st.info(f"▸ {action}")
     if len(actions) > n:
         st.caption(f"+ {len(actions) - n} additional actions on the Operations page.")

@@ -34,10 +34,16 @@ def test_full_mapping():
 
 
 def test_error_code_sets_login_failure():
+    # login_success=False only applies to ConsoleLogin events; other event
+    # types with error codes report True (throttling != auth failure).
     event = normalize_cloudtrail_event(
-        _cloudtrail_record(errorCode="AccessDenied")
+        _cloudtrail_record(eventName="ConsoleLogin", errorCode="AccessDenied")
     )
     assert event["metadata"]["login_success"] is False
+    non_login = normalize_cloudtrail_event(
+        _cloudtrail_record(errorCode="AccessDenied")
+    )
+    assert non_login["metadata"]["login_success"] is True
 
 
 def test_missing_event_name_skipped():

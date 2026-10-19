@@ -75,6 +75,10 @@ def test_send_alert_success_on_first_try(mock_urlopen, monkeypatch):
 def test_send_alert_retry_then_success(mock_urlopen, monkeypatch):
     mock_response = MagicMock()
     mock_response.status = 200
+    # Make the mock its own context manager so side_effect entries work
+    # with `with urlopen(...) as response`.
+    mock_response.__enter__.return_value = mock_response
+    mock_response.__exit__.return_value = False
     mock_urlopen.return_value.__enter__.return_value = mock_response
 
     # First call fails, second succeeds
@@ -156,4 +160,5 @@ def test_payload_format_pagerduty():
     from reporting.notifications import _build_payload
     payload = _build_payload(brief, "pagerduty")
     assert payload["event_action"] == "trigger"
-    assert payload["payload"]["severity"] == "high"
+    # PagerDuty v2 accepts critical/error/warning/info — High maps to error.
+    assert payload["payload"]["severity"] == "error"

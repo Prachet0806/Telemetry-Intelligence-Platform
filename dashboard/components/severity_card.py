@@ -28,6 +28,8 @@ def render_severity_card(severity: str, show_description: bool = True) -> None:
     show_description : bool
         Whether to show a one-line description beneath the badge
     """
+    if not isinstance(severity, str) or not severity:
+        severity = "Low"
     colour = _SEVERITY_COLOURS.get(severity, "#6b7280")
     icon = _SEVERITY_ICONS.get(severity, "⚪")
 

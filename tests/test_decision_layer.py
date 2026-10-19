@@ -9,11 +9,15 @@ def test_playbook_lookup_per_tier():
     assert recommend_actions("High")
     assert recommend_actions("Moderate")
     assert recommend_actions("Low")
+    # case-insensitive lookup
+    assert recommend_actions("critical") == recommend_actions("Critical")
 
 
-def test_unknown_severity_falls_back_to_low():
-    actions = recommend_actions("Bogus")
-    assert actions  # non-empty fallback
+def test_unknown_severity_raises_fail_closed():
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown severity"):
+        recommend_actions("Bogus")
 
 
 def test_repo_configs_validate():

@@ -1,0 +1,14 @@
+# config/roles.yaml
+# Role-based access (#18): user -> role; pages list allowed roles.
+users:
+  operator: {password_env: DASH_PASS_OPERATOR, role: operator}
+  analyst: {password_env: DASH_PASS_ANALYST, role: analyst}
+  executive: {password_env: DASH_PASS_EXECUTIVE, role: executive}
+  admin: {password_env: DASH_PASS_ADMIN, role: admin}
+pages:
+  Home: [operator, analyst, executive, admin]
+  Operations: [operator, analyst, admin]
+  Security: [analyst, admin]
+  Executive: [executive, admin]
+  Technical: [admin, analyst]
+  History: [operator, analyst, executive, admin]

@@ -13,7 +13,9 @@ def _inflated_ctx() -> object:
 
 
 def test_raw_product_is_inflated_by_background_rates():
-    assert estimate_impact(_inflated_ctx()) == 600000.0  # 100k * 1.5 * 4
+    # Caps ALWAYS apply now (fail-safe default = Low): 100k * 1.5 * 4 = 600k
+    # raw is clamped to the Low cap of 250k.
+    assert estimate_impact(_inflated_ctx()) == 250000.0
 
 
 def test_low_severity_cap_keeps_brief_coherent():
@@ -31,7 +33,7 @@ def test_caps_widen_with_severity():
         total_events=5000,         # x1.5
         admin_scope_rate=0.10,     # x4
     )
-    raw = estimate_impact(ctx)               # 100k * 36 = 3.6M uncapped
+    raw = estimate_impact(ctx, severity="Critical")  # 100k * 36 = 3.6M uncapped
     assert raw == 3600000.0
     assert estimate_impact(ctx, severity="Moderate") == 750000.0
     assert estimate_impact(ctx, severity="High") == 2000000.0

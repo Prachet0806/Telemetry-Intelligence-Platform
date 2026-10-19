@@ -72,48 +72,92 @@ PHASE 4 - Scale & operations
    dashboard helpers. Every later phase depends on this safety net.
    **Status: implemented** (`tests/`, 70+ tests incl. a label-leakage regression
    guard; CI in `.github/workflows/ci.yml`).
-2. **Proper evaluation & calibration** — evaluate baseline-vs-ML on a held-out split
-   (**done**: `ml/evaluation.evaluate_models_on_holdout` scores both detectors on the
-   identical test rows; the old in-sample `baseline_vs_supervised` metric is retired);
-   remaining: PR-AUC and decision-threshold selection.
-3. **Expanded feature set** — actor/account frequency, rolling-window aggregates,
-   user-agent/IP features, hour-of-week seasonality.
+ 2. **Proper evaluation & calibration** — evaluate baseline-vs-ML on a held-out split
+    (**done**: `ml/evaluation.evaluate_models_on_holdout` scores both detectors on the
+    identical test rows; the old in-sample `baseline_vs_supervised` metric is retired);
+    PR-AUC (`compute_pr_auc`) + fixed 0.5 holdout operating point — **implemented**.
+    Threshold calibration is deferred until an independently reviewed validation
+    set exists; optimizing against the reported holdout would leak test labels.
+ 3. **Expanded feature set** — actor/account frequency, rolling-window aggregates,
+    user-agent/IP features, hour-of-week seasonality.
+    **Status: implemented** (`processing/feature_engineering.py`: `hour_of_week`,
+    `is_weekend`, `actor_event_count`, `ip_event_count`, `actor_events_1h`,
+    `region_freq`, `login_failed`, …).
 
 ## 5. Phase 2 - Decision intelligence depth
 
 4. **Weighted severity scoring** — replace the hard-coded cascade with configurable
    weighted scores + tier bands.
+   **Status: implemented** (`decision/severity_engine.score_severity` +
+   `config/severity_weights.yaml`; cascade stays authoritative, score is an
+   explainable overlay with `Severity Score` + `Severity Contributions` in the brief).
 5. **Richer impact model** — cost breakdown by category/region/resource and
    min/max sensitivity ranges.
+   **Status: implemented** (`decision/impact_estimator.estimate_impact_detailed` +
+   `Estimated Financial Exposure Range` + `Impact Breakdown` in the brief).
 6. **Action triage & status** — priority/owner metadata, persisted completion state,
    dependency ordering.
+   **Status: implemented** (`decision/playbook_registry.get_enriched_actions` +
+   `decision/triage_store.py` SQLite `init_run`/`set_status`/`get_run`; dashboard
+   triage controls on the Operations page).
 
 ## 6. Phase 3 - Automation & delivery
 
 7. **Scheduled / incremental ingestion** — watermark-persisted, cron/Airflow/APScheduler
    runs with catch-up windows.
+   **Status: partial** (`scripts/scheduler.py` + `config/scheduler.yaml`;
+   CloudWatch watermark advances only after a persisted live-source run and a
+   capped query fails closed instead of silently publishing a truncated batch.
+   Durable page-token resume and event-ID checkpointing remain open).
 8. **Export & API** — PDF/CSV reports plus a FastAPI endpoint serving decision briefs.
+   **Status: implemented** (`api/main.py`: `/health`, `/brief/latest`,
+   `/brief/{id}`, `/runs`, `/export/csv|pdf`; `reporting/export_utils.py`;
+   production `API_KEY` bearer guard on all data routes, with only `/health` public).
 9. **Trend / history tracking** — persist per-run briefs; enables historical dashboards
    and long-horizon drift analysis.
+   **Status: implemented** (`reporting/history_store.py` SQLite `record_run` /
+   `list_runs` / `get_brief` + watermark; WAL-safe for pipeline/dashboard/API).
 10. **Historical dashboards** — time-series of severity, exposure, anomaly rate.
+    **Status: implemented** (`dashboard/pages/5_History.py`: exposure +
+    anomaly/high-risk charts, run table, per-run brief inspector).
 
 ## 7. Phase 4 - Scale & operations
 
 11. **Containerization & CI/CD** — Dockerfile/compose, GitHub Actions (lint, test,
     pipeline smoke run).
+    **Status: implemented** (`Dockerfile`, `docker-compose.yml` with
+    pipeline/scheduler + dashboard + api services, `restart: unless-stopped`,
+    `./data:/app/data` persistence; CI compiles, validates configs, runs pytest,
+    dry-run smoke, and builds the image).
 12. **Drift monitoring & retraining** — feature/label distribution checks with alerts
     and retraining triggers.
+    **Status: implemented** (`ml/drift.py` PSI + KS + label-rate vs
+    `reference_stats.json`; `--retrain` refreshes the reference; `drift.yaml`
+    thresholds validated at startup; scipy optional).
 13. **Additional data sources** — S3 CloudTrail, EventBridge, local CSV/Parquet behind a
     pluggable source adapter.
+    **Status: implemented** (`ingestion/base.py` `SourceAdapter` protocol +
+    `csv_adapter.py` + `s3_adapter.py`; `source_router` documents standalone vs
+    CloudWatch→local→mock chain; watermark-aware `start_time`/`end_time`
+    supported by both adapters).
 14. **Role-based access** — stakeholder-gated pages.
+   **Status: implemented** (`dashboard/auth.py` + `config/roles.yaml`; page guards
+   run before telemetry loads; default passwords work only in development mode).
 
 ## 8. Backlog (opportunistic)
 
 - Scenario-driven mock generator (attack/drift scenarios with deterministic seeds)
-- SHAP/LIME feature attribution
-- Model selection & hyperparameter tuning (RF/XGBoost/SVM + CV)
-- Structured JSON logging + pipeline health metrics endpoint
-- Data retention / archival policies
+  — **implemented** (`scripts/generate_mock_telemetry.py --scenario`).
+- SHAP/LIME feature attribution — **implemented (lightweight)** as
+  `explainability/attribution.top_features` (model-coefficient/importance based).
+- Model selection & hyperparameter tuning (RF/XGBoost/SVM + CV) — **implemented
+  (reporting-only)** as `ml/model_selection.select_best_model` (PR-AUC CV; LR
+  remains the served model).
+- Structured JSON logging + pipeline health metrics endpoint — **implemented**
+  (`reporting/json_logging.py --json-logs`; `GET /health` reports
+  `runs_recorded`).
+- Data retention / archival policies — **implemented** (`scripts/prune.py` +
+  `config/retention.yaml`; run on cron for TTL pruning).
 
 ## 9. Impact x Effort x Timeline matrix
 
@@ -125,22 +169,23 @@ PHASE 4 - Scale & operations
 | Q4 | Audit trail | M-H | S | 1-2 days | **implemented** |
 | Q4 | Severity alerting | H | S-M | 2-3 days | **implemented** |
 | 19 | Test suite | H | M | 3-5 days | **implemented** (70+ tests + CI) |
-| 7 | Proper evaluation & calibration | H | M | 2-4 days | **partially done** (held-out baseline-vs-ML comparison; PR-AUC/calibration pending) |
-| 5 | Expanded feature set | H | M | 3-5 days | planned |
-| 10 | Weighted severity scoring | M-H | S-M | 2-3 days | planned |
-| 12 | Richer impact model | M | M | 3-5 days | planned |
-| 13 | Action triage & status | M | M | 3-5 days | planned |
-| 2 | Scheduled / incremental ingestion | H | L | 1-2 weeks | planned |
-| 16 | Export & API | H | M | 3-5 days | planned |
-| 11 | Trend / history tracking | H | M | 3-5 days | planned |
-| 17 | Historical dashboards | M | M | 2-4 days | planned |
-| 21 | Containerization & CI/CD | H | M | 3-5 days | planned |
-| 8 | Drift monitoring & retraining | H | L | 1-2 weeks | planned |
-| 3 | Additional data sources | M | M | 3-5 days | planned |
-| 18 | Role-based access | M | M | 2-3 days | planned |
-| 22 | Scenario mock generator | M | M | 2-3 days | backlog |
-| 23 | SHAP/LIME attribution | M | M | 3-5 days | backlog |
-| 24 | Model selection & tuning | M | M | 3-5 days | backlog |
-| 25 | JSON logging & health metrics | L-M | S | 1-2 days | backlog |
+| 7 | Proper evaluation & calibration | H | M | 2-4 days | **partial** (chronological holdout + PR-AUC; calibration awaits reviewed labels) |
+| 5 | Expanded feature set | H | M | 3-5 days | **implemented** |
+| 10 | Weighted severity scoring | M-H | S-M | 2-3 days | **implemented** |
+| 12 | Richer impact model | M | M | 3-5 days | **implemented** |
+| 13 | Action triage & status | M | M | 3-5 days | **implemented** |
+| 2 | Scheduled / incremental ingestion | H | L | 1-2 weeks | **partial** (durable page-token resume and live catch-up validation open) |
+| 16 | Export & API | H | M | 3-5 days | **implemented** |
+| 11 | Trend / history tracking | H | M | 3-5 days | **implemented** |
+| 17 | Historical dashboards | M | M | 2-4 days | **implemented** |
+| 21 | Containerization & CI/CD | H | M | 3-5 days | **implemented** |
+| 8 | Drift monitoring & retraining | H | L | 1-2 weeks | **implemented** |
+| 3 | Additional data sources | M | M | 3-5 days | **implemented** |
+| 18 | Role-based access | M | M | 2-3 days | **implemented** |
+| 22 | Scenario mock generator | M | M | 2-3 days | **implemented** |
+| 23 | SHAP/LIME attribution | M | M | 3-5 days | **implemented (lightweight)** |
+| 24 | Model selection & tuning | M | M | 3-5 days | **implemented (reporting-only)** |
+| 25 | JSON logging & health metrics | L-M | S | 1-2 days | **implemented** |
+| 26 | Retention / prune | L-M | S | 1-2 days | **implemented** |
 
 Effort scale: S = <=2 days, M = 3-5 days, L = 1-2 weeks.

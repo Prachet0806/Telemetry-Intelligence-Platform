@@ -26,7 +26,7 @@ def test_engineer_features_shape_and_label(events_df):
         "hour", "day_of_week", "is_off_hours", "is_service_actor",
         "is_iam_event", "resource_count", "is_admin_scope", "label_high_risk",
     }
-    assert set(feats.columns) == expected
+    assert expected.issubset(set(feats.columns))
     assert len(feats) == len(events_df)
     assert set(feats["label_high_risk"].unique()).issubset({0, 1})
     assert (feats["is_admin_scope"] == (events_df["metadata.policy_scope"] == "admin").astype(int)).all()

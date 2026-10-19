@@ -1,12 +1,13 @@
 # config/detection.yaml
 # Unsupervised anomaly-detection settings used by ml/unsupervised.py.
 #
-# IMPORTANT: with a fixed `contamination` value c, Isolation Forest flags
-# almost exactly a fraction c of events as anomalous on every run. The
-# severity tiers in severity_thresholds.yaml that key off `anomaly_rate`
-# (Moderate > 0.08, Critical > 0.15) can only fire if this value is tuned
-# above those thresholds -- or if you raise the thresholds down towards it.
-# Tune the pair together; decision/config_validation.py sanity-checks both.
+# IMPORTANT: the unsupervised rate is measured with held-out scoring
+# (ml/unsupervised.py fits on a train split and applies the frozen score
+# threshold to the full batch), so it varies around `contamination` instead
+# of being pinned to it. Severity tiers keyed off `anomaly_rate`
+# (Moderate >= 0.08, Critical >= 0.15) fire rarely when set far above this
+# value and often when set far below -- tune the pair together;
+# decision/config_validation.py warns on large mismatches.
 
 detection:
   # Fraction of events Isolation Forest is expected to flag as anomalous.

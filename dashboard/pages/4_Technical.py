@@ -19,36 +19,41 @@ from dashboard.components.metrics_table import (
     render_baseline_comparison,
 )
 from decision.decision_context import DecisionContext
-from reporting.stakeholder_views import technical_view
+from reporting.stakeholder_views import build_context_from_brief, technical_view
+from dashboard.auth import require_page
+from reporting.run_store import latest_run_dir
 
 st.set_page_config(page_title="Technical | Decision Intelligence", layout="wide")
+require_page(st, "Technical")
 
 # ---------------------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------------------
 
-METRICS_PATH = PROJECT_ROOT / "data" / "processed" / "metrics.json"
-FEATURES_PATH = PROJECT_ROOT / "data" / "processed" / "features.parquet"
+RUN_DIR = latest_run_dir(PROJECT_ROOT / "data" / "processed")
+METRICS_PATH = RUN_DIR / "metrics.json"
+FEATURES_PATH = RUN_DIR / "features.parquet"
 
 if not METRICS_PATH.exists() or not FEATURES_PATH.exists():
     st.error("Pipeline output not found. Run the pipeline first.")
     st.code("python scripts/run_pipeline.py")
     st.stop()
 
-with open(METRICS_PATH) as f:
-    metrics = json.load(f)
+try:
+    with open(METRICS_PATH, encoding="utf-8") as f:
+        metrics = json.load(f)
+except (OSError, json.JSONDecodeError) as exc:
+    st.error(f"Could not read metrics.json: {exc}. Re-run the pipeline.")
+    st.stop()
 
-df = pd.read_parquet(FEATURES_PATH)
+try:
+    df = pd.read_parquet(FEATURES_PATH)
+except Exception as exc:
+    st.error(f"Could not read features.parquet: {exc}. Re-run the pipeline.")
+    st.stop()
 di = metrics.get("decision_intelligence", {})
 
-ctx = DecisionContext(
-    baseline_flag_rate=float(metrics.get("baseline", {}).get("positive_rate", 0)),
-    anomaly_rate=float(metrics.get("unsupervised", {}).get("anomaly_rate", 0)),
-    high_risk_percentage=di.get("Signal Summary", {}).get("High-Risk Event %", 0),
-    total_events=di.get("Signal Summary", {}).get("Total Events Analyzed", 0),
-    supervised_precision=di.get("Signal Summary", {}).get("Supervised Precision"),
-    supervised_recall=di.get("Signal Summary", {}).get("Supervised Recall"),
-)
+ctx = build_context_from_brief(di, metrics)
 
 view = technical_view(di, ctx, metrics)
 
@@ -91,7 +96,8 @@ st.subheader("🧠 Decision Intelligence Signals")
 sig = di.get("Signal Summary", {})
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Anomaly Rate", sig.get("Anomaly Rate", "N/A"))
-c2.metric("High-Risk %", sig.get("High-Risk Event %", "N/A"))
+c2.metric("High-Risk Label Rate", sig.get("High-Risk Event %", "N/A"))
+st.caption(metrics.get("supervised_evaluation", {}).get("interpretation", "Label provenance is unverified."))
 c3.metric("Baseline Rate", sig.get("Baseline Flag Rate", "N/A"))
 c4.metric("Severity", di.get("Severity", "N/A"))
 st.metric("Estimated Exposure", view["Estimated Exposure"])

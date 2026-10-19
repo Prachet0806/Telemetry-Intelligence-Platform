@@ -12,38 +12,42 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from decision.decision_context import DecisionContext
-from reporting.stakeholder_views import security_view
+from reporting.stakeholder_views import build_context_from_brief, security_view
+from dashboard.auth import require_page
+from reporting.run_store import latest_run_dir
 
 st.set_page_config(page_title="Security | Decision Intelligence", layout="wide")
+require_page(st, "Security")
 
 # ---------------------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------------------
 
-METRICS_PATH = PROJECT_ROOT / "data" / "processed" / "metrics.json"
-FEATURES_PATH = PROJECT_ROOT / "data" / "processed" / "features.parquet"
+RUN_DIR = latest_run_dir(PROJECT_ROOT / "data" / "processed")
+METRICS_PATH = RUN_DIR / "metrics.json"
+FEATURES_PATH = RUN_DIR / "features.parquet"
 
 if not METRICS_PATH.exists() or not FEATURES_PATH.exists():
     st.error("Pipeline output not found. Run the pipeline first.")
     st.code("python scripts/run_pipeline.py")
     st.stop()
 
-with open(METRICS_PATH) as f:
-    metrics = json.load(f)
+try:
+    with open(METRICS_PATH, encoding="utf-8") as f:
+        metrics = json.load(f)
+except (OSError, json.JSONDecodeError) as exc:
+    st.error(f"Could not read metrics.json: {exc}. Re-run the pipeline.")
+    st.stop()
 
-df = pd.read_parquet(FEATURES_PATH)
+try:
+    df = pd.read_parquet(FEATURES_PATH)
+except Exception as exc:
+    st.error(f"Could not read features.parquet: {exc}. Re-run the pipeline.")
+    st.stop()
 di = metrics.get("decision_intelligence", {})
 
-# Build context for security view
-ctx = DecisionContext(
-    baseline_flag_rate=float(metrics.get("baseline", {}).get("positive_rate", 0)),
-    anomaly_rate=float(metrics.get("unsupervised", {}).get("anomaly_rate", 0)),
-    high_risk_percentage=di.get("Signal Summary", {}).get("High-Risk Event %", 0),
-    total_events=di.get("Signal Summary", {}).get("Total Events Analyzed", 0),
-    supervised_precision=di.get("Signal Summary", {}).get("Supervised Precision"),
-    supervised_recall=di.get("Signal Summary", {}).get("Supervised Recall"),
-)
+# Build context for security view (prefers Signal Summary Raw; parses "12.5%")
+ctx = build_context_from_brief(di, metrics)
 
 view = security_view(di, ctx, metrics)
 
@@ -59,7 +63,8 @@ st.divider()
 st.subheader("🔍 Detection Signals")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Anomaly Rate", f"{view['Anomaly Rate']:.1%}")
-c2.metric("High-Risk Events", f"{view['High-Risk Event %']:.1f}%")
+c2.metric("Events Labeled High Risk", f"{view['High-Risk Event %']:.1f}%")
+st.caption(di.get("High-Risk Label Basis", "Independent label review is not established."))
 c3.metric("Baseline Flag Rate", f"{view['Baseline Flag Rate']:.1%}")
 c4.metric("Severity", view["Severity"])
 
@@ -117,11 +122,15 @@ selected_feature = st.selectbox(
 )
 # Use histogram for continuous features, bar chart for categorical
 if df[selected_feature].nunique() > 20:
-    # Proper histogram with auto binning
-    hist, bins = pd.cut(df[selected_feature], bins=30, retbins=True)
-    hist_df = hist.value_counts().sort_index()
-    hist_df.index = [f"{b:.1f}–{bins[i+1]:.1f}" for i, b in enumerate(bins[:-1])]
-    st.bar_chart(hist_df)
+    # Proper histogram with auto binning (guard constant columns)
+    try:
+        hist, bins = pd.cut(df[selected_feature], bins=30, retbins=True)
+    except ValueError:
+        st.bar_chart(df[selected_feature].value_counts())
+    else:
+        hist_df = hist.value_counts().sort_index()
+        hist_df.index = [f"{bins[i]:.1f}–{bins[i+1]:.1f}" for i in range(len(bins) - 1)]
+        st.bar_chart(hist_df)
 else:
     st.bar_chart(df[selected_feature].value_counts())
 

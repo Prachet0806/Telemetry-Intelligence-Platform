@@ -78,15 +78,23 @@ def test_inverted_impact_caps_rejected(tmp_path):
 
 def test_unreachable_anomaly_tier_rejected(tmp_path):
     """
-    Regression for the 'structurally unreachable severity tier' flaw: an
-    anomaly threshold at or below contamination can never fire.
+    Anomaly thresholds must be fractions in (0, 1]. Nonsensical values
+    fail fast; far-from-contamination values warn but remain valid
+    because the held-out anomaly rate genuinely varies.
     """
     _skeleton(tmp_path)
-    data = yaml.safe_load((tmp_path / "config/detection.yaml").read_text())
-    data["detection"]["contamination"] = 0.09   # moderate tier needs > 0.08
-    _write(tmp_path, "config/detection.yaml", data)
-    with pytest.raises(ValueError, match="can never fire"):
+    # Nonsensical threshold (> 1) is rejected...
+    data = yaml.safe_load((tmp_path / "config/severity_thresholds.yaml").read_text())
+    data["thresholds"]["moderate"]["anomaly_rate"] = 1.5
+    _write(tmp_path, "config/severity_thresholds.yaml", data)
+    with pytest.raises(ValueError, match="anomaly_rate"):
         _run_on(tmp_path)
+    # ...while a threshold far above contamination passes (with a warning).
+    _skeleton(tmp_path)
+    det = yaml.safe_load((tmp_path / "config/detection.yaml").read_text())
+    det["detection"]["contamination"] = 0.09   # moderate tier needs >= 0.08
+    _write(tmp_path, "config/detection.yaml", det)
+    _run_on(tmp_path)  # must not raise
 
 
 def test_bad_contamination_range_rejected(tmp_path):

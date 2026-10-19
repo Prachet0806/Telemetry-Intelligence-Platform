@@ -20,8 +20,10 @@ def test_critical_on_anomaly_rate():
 
 def test_high_tier():
     assert determine_severity(make_ctx(high_risk_percentage=12.0)) == "High"
+    # boundary is inclusive (>=): exactly at threshold fires
+    assert determine_severity(make_ctx(high_risk_percentage=10.0)) == "High"
     # strictly-below threshold stays lower
-    assert determine_severity(make_ctx(high_risk_percentage=10.0)) != "High"
+    assert determine_severity(make_ctx(high_risk_percentage=9.9)) != "High"
 
 
 def test_moderate_on_admin_scope_rate():

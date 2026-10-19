@@ -51,11 +51,18 @@ def _validate_severity_thresholds() -> None:
         _require(tier in thresholds, f"severity_thresholds.yaml: missing tier '{tier}'")
         for key in keys:
             value = thresholds[tier].get(key)
-            _require(
-                value is None or (_is_number(value) and value >= 0),
-                f"severity_thresholds.yaml: thresholds.{tier}.{key} "
-                "must be a non-negative number or null",
-            )
+            if key == "high_risk_percentage":
+                _require(
+                    value is None or (_is_number(value) and 0 <= value <= 100),
+                    f"severity_thresholds.yaml: thresholds.{tier}.{key} "
+                    "must be a percent in [0, 100] or null",
+                )
+            else:
+                _require(
+                    value is None or (_is_number(value) and 0 <= value <= 1),
+                    f"severity_thresholds.yaml: thresholds.{tier}.{key} "
+                    "must be a fraction in [0, 1] or null",
+                )
 
     # Tier sanity: each signal's threshold must loosen monotonically from
     # critical -> moderate, otherwise lower tiers could fire before higher ones.
@@ -78,7 +85,15 @@ def _validate_impact_model() -> None:
     data = _load_config("config/impact_model.yaml")
     _require("impact_model" in data, "impact_model.yaml: missing 'impact_model' key")
     model = data["impact_model"]
-    _require(_is_number(model.get("base_cost")), "impact_model.yaml: base_cost must be a number")
+    _require(
+        _is_number(model.get("base_cost")) and model.get("base_cost") > 0,
+        "impact_model.yaml: base_cost must be a positive number",
+    )
+    sensitivity = model.get("sensitivity_pct", 0.25)
+    _require(
+        _is_number(sensitivity) and 0 <= sensitivity <= 1,
+        "impact_model.yaml: sensitivity_pct must be in [0, 1]",
+    )
 
     multipliers = model.get("multipliers")
     _require(isinstance(multipliers, dict), "impact_model.yaml: multipliers must be a mapping")
@@ -89,26 +104,35 @@ def _validate_impact_model() -> None:
         "admin_scope_threshold", "admin_scope_multiplier",
     )
     for key in required:
-        _require(
-            _is_number(multipliers.get(key)),
-            f"impact_model.yaml: multipliers.{key} must be a number",
-        )
+        v = multipliers.get(key)
+        if key in ("large_event_volume",):
+            _require(
+                _is_number(v) and v >= 0,
+                f"impact_model.yaml: multipliers.{key} must be a non-negative number",
+            )
+        else:
+            _require(
+                _is_number(v) and v > 0,
+                f"impact_model.yaml: multipliers.{key} must be a positive number",
+            )
 
     # Severity caps: optional section; values are positive numbers or null,
-    # and caps must widen as severity rises.
+    # and caps must widen as severity rises. Keys are lowercase
+    # (critical/high/moderate/low); accept Title-case too for robustness.
     caps = model.get("impact_caps")
     if caps is not None:
         _require(isinstance(caps, dict), "impact_model.yaml: impact_caps must be a mapping")
-        for tier in _SEVERITY_TIERS:
-            value = caps.get(tier)
+        norm_caps = {str(k).lower(): v for k, v in caps.items()}
+        for tier in ("critical", "high", "moderate", "low"):
+            value = norm_caps.get(tier)
             _require(
                 value is None or (_is_number(value) and value > 0),
                 f"impact_model.yaml: impact_caps.{tier} must be a positive number or null",
             )
         present = [
-            (caps[tier], tier)
+            (norm_caps[tier], tier)
             for tier in ("low", "moderate", "high")
-            if caps.get(tier) is not None
+            if norm_caps.get(tier) is not None
         ]
         for (v_a, t_a), (v_b, t_b) in zip(present, present[1:]):
             _require(
@@ -117,8 +141,8 @@ def _validate_impact_model() -> None:
                 f"{t_b} ({v_b}); caps must widen with severity",
             )
         _require(
-            "critical" not in caps or caps["critical"] is None or caps["critical"] >= max(
-                (v for v in (caps.get("high"),) if v is not None), default=0
+            "critical" not in norm_caps or norm_caps["critical"] is None or norm_caps["critical"] >= max(
+                (v for v in (norm_caps.get("high"),) if v is not None), default=0
             ),
             "impact_model.yaml: impact_caps.critical must be null or the largest cap",
         )
@@ -130,10 +154,43 @@ def _validate_playbooks() -> None:
     playbooks = data["playbooks"]
     for tier in _SEVERITY_TIERS:
         actions = playbooks.get(tier)
-        _require(
-            isinstance(actions, list) and all(isinstance(a, str) for a in actions),
-            f"playbooks.yaml: playbooks.{tier} must be a list of strings",
-        )
+        _require(isinstance(actions, list) and len(actions) > 0,
+                 f"playbooks.yaml: playbooks.{tier} must be a non-empty list")
+        ids = []
+        dependencies = {}
+        for index, a in enumerate(actions, 1):
+            _require(isinstance(a, (str, dict)),
+                     f"playbooks.yaml: playbooks.{tier} entries must be strings or mappings")
+            if isinstance(a, dict):
+                _require(isinstance(a.get("title"), str) and bool(a.get("title").strip()),
+                         f"playbooks.yaml: playbooks.{tier} dict entries need a 'title'")
+            action_id = a.get("id", f"{tier[:3].upper()}-{index}") if isinstance(a, dict) else f"{tier[:3].upper()}-{index}"
+            _require(isinstance(action_id, str) and action_id,
+                     f"playbooks.yaml: playbooks.{tier} action IDs must be non-empty strings")
+            ids.append(action_id)
+            deps = a.get("depends_on", []) if isinstance(a, dict) else []
+            _require(isinstance(deps, list) and all(isinstance(dep, str) for dep in deps),
+                     f"playbooks.yaml: playbooks.{tier} depends_on must be a list of IDs")
+            dependencies[action_id] = deps
+        _require(len(ids) == len(set(ids)), f"playbooks.yaml: duplicate action IDs in {tier}")
+        known = set(ids)
+        for action_id, deps in dependencies.items():
+            _require(set(deps) <= known,
+                     f"playbooks.yaml: {action_id} references unknown dependencies")
+        state = {}
+
+        def visit(action_id):
+            _require(state.get(action_id) != 1,
+                     f"playbooks.yaml: dependency cycle in {tier} at {action_id}")
+            if state.get(action_id) == 2:
+                return
+            state[action_id] = 1
+            for dependency in dependencies[action_id]:
+                visit(dependency)
+            state[action_id] = 2
+
+        for action_id in ids:
+            visit(action_id)
 
 
 def _validate_alerts() -> None:
@@ -173,9 +230,15 @@ def _validate_detection() -> tuple[float, float]:
     Validate detection settings and cross-check them against the severity
     thresholds that consume `anomaly_rate`.
 
-    Isolation Forest with fixed `contamination` c flags ~c of events every
-    run, so any anomaly_rate tier threshold <= c is structurally unreachable.
+    The unsupervised rate is measured on held-out scores (see
+    ml/unsupervised.py), so it varies around `contamination` instead of
+    being pinned to it. Thresholds far above contamination therefore fire
+    rarely (low sensitivity); thresholds far below fire constantly (low
+    specificity). Both are valid configurations, so this gate fails only
+    on nonsensical values and warns otherwise.
     """
+    import logging as _logging
+
     data = _load_config("config/detection.yaml")
     _require("detection" in data, "detection.yaml: missing 'detection' key")
     detection = data["detection"]
@@ -196,14 +259,113 @@ def _validate_detection() -> tuple[float, float]:
         rate = thresholds.get(tier, {}).get("anomaly_rate")
         if rate is not None:
             _require(
-                rate > contamination,
-                f"detection.yaml: severity '{tier}' triggers at anomaly_rate > {rate}, "
-                f"but contamination pins the observed rate near {contamination} -- "
-                "the tier can never fire. Raise this threshold above contamination "
-                "or lower contamination.",
+                _is_number(rate) and 0 < rate <= 1,
+                f"detection.yaml: severity '{tier}' anomaly_rate must be in (0, 1], got {rate}",
             )
+            if rate > 3 * contamination:
+                _logging.getLogger(__name__).warning(
+                    "[CONFIG] severity '%s' anomaly_rate %.3f is far above "
+                    "contamination %.3f and will fire rarely; consider lowering "
+                    "the threshold or raising contamination.",
+                    tier, rate, contamination,
+                )
+            elif rate < contamination / 3:
+                _logging.getLogger(__name__).warning(
+                    "[CONFIG] severity '%s' anomaly_rate %.3f is far below "
+                    "contamination %.3f and will fire on most runs.",
+                    tier, rate, contamination,
+                )
 
     return contamination, random_state
+
+
+def _validate_scheduler() -> None:
+    path = _ROOT / "config" / "scheduler.yaml"
+    if not path.exists():
+        return
+    data = _load_config("config/scheduler.yaml")
+    cfg = data.get("scheduler")
+    _require(isinstance(cfg, dict), "scheduler.yaml: scheduler must be a mapping")
+    _require(isinstance(cfg.get("enabled", False), bool), "scheduler.yaml: enabled must be boolean")
+    _require(isinstance(cfg.get("run_on_start", True), bool), "scheduler.yaml: run_on_start must be boolean")
+    for key in ("interval_hours", "catchup_hours"):
+        value = cfg.get(key)
+        _require(
+            _is_number(value) and value > 0,
+            f"scheduler.yaml: {key} must be a positive number",
+        )
+
+
+def _validate_drift() -> None:
+    path = _ROOT / "config" / "drift.yaml"
+    if not path.exists():
+        return
+    cfg = _load_config("config/drift.yaml").get("drift")
+    _require(isinstance(cfg, dict), "drift.yaml: drift must be a mapping")
+    for key in ("psi_threshold", "ks_threshold"):
+        value = cfg.get(key)
+        _require(_is_number(value) and value > 0, f"drift.yaml: {key} must be positive")
+    delta = cfg.get("label_rate_delta")
+    _require(_is_number(delta) and 0 <= delta <= 1, "drift.yaml: label_rate_delta must be in [0, 1]")
+    minimum = cfg.get("min_reference_events")
+    _require(isinstance(minimum, int) and not isinstance(minimum, bool) and minimum > 0,
+             "drift.yaml: min_reference_events must be a positive integer")
+
+
+def _validate_retention_and_roles() -> None:
+    retention_path = _ROOT / "config" / "retention.yaml"
+    if retention_path.exists():
+        cfg = _load_config("config/retention.yaml").get("retention")
+        _require(isinstance(cfg, dict), "retention.yaml: retention must be a mapping")
+        for key in ("raw_days", "processed_days", "history_days"):
+            value = cfg.get(key)
+            _require(isinstance(value, int) and not isinstance(value, bool) and value > 0,
+                     f"retention.yaml: {key} must be a positive integer")
+        _require(isinstance(cfg.get("watermark_keep", True), bool),
+                 "retention.yaml: watermark_keep must be boolean")
+    roles_path = _ROOT / "config" / "roles.yaml"
+    if roles_path.exists():
+        data = _load_config("config/roles.yaml")
+        users, pages = data.get("users"), data.get("pages")
+        _require(isinstance(users, dict) and users, "roles.yaml: users must be a non-empty mapping")
+        _require(isinstance(pages, dict) and pages, "roles.yaml: pages must be a non-empty mapping")
+        defined_roles = set()
+        for username, user in users.items():
+            _require(isinstance(username, str) and isinstance(user, dict), "roles.yaml: each user must be a mapping")
+            _require(isinstance(user.get("password_env"), str) and user["password_env"],
+                     f"roles.yaml: {username} requires password_env")
+            _require(isinstance(user.get("role"), str) and user["role"],
+                     f"roles.yaml: {username} requires role")
+            defined_roles.add(user["role"])
+        for page, allowed in pages.items():
+            _require(isinstance(page, str) and isinstance(allowed, list),
+                     "roles.yaml: page access must be a list of roles")
+            _require(all(isinstance(role, str) for role in allowed),
+                     f"roles.yaml: page {page!r} role entries must be strings")
+            _require(set(allowed) <= defined_roles,
+                     f"roles.yaml: page {page!r} references an undefined role")
+
+
+def _validate_severity_weights() -> None:
+    path = _ROOT / "config" / "severity_weights.yaml"
+    if not path.exists():
+        return
+    cfg = _load_config("config/severity_weights.yaml").get("severity_weights")
+    _require(isinstance(cfg, dict), "severity_weights.yaml: severity_weights must be a mapping")
+    weights = cfg.get("weights")
+    _require(isinstance(weights, dict) and weights, "severity_weights.yaml: weights must be a non-empty mapping")
+    values = list(weights.values())
+    _require(all(_is_number(v) and v >= 0 for v in values),
+             "severity_weights.yaml: weights must be non-negative numbers")
+    _require(sum(values) > 0, "severity_weights.yaml: at least one weight must be positive")
+    bands = cfg.get("bands", {})
+    _require(isinstance(bands, dict), "severity_weights.yaml: bands must be a mapping")
+    ordered = [bands.get(key) for key in ("moderate", "high", "critical")]
+    if all(value is not None for value in ordered):
+        _require(all(_is_number(v) and 0 <= v <= 100 for v in ordered),
+                 "severity_weights.yaml: severity bands must be in [0, 100]")
+        _require(ordered[0] <= ordered[1] <= ordered[2],
+                 "severity_weights.yaml: bands must increase from moderate to critical")
 
 
 def validate_configs() -> list[str]:
@@ -217,7 +379,16 @@ def validate_configs() -> list[str]:
     _validate_impact_model()
     _validate_playbooks()
     _validate_alerts()
-    _validate_detection()
+    _contamination, _random_state = _validate_detection()
+    _validate_scheduler()
+    _validate_drift()
+    _validate_retention_and_roles()
+    _validate_severity_weights()
+    _validate_optional("config/severity_weights.yaml", "severity_weights")
+    _validate_optional("config/scheduler.yaml", "scheduler")
+    _validate_optional("config/drift.yaml", "drift")
+    _validate_optional("config/retention.yaml", "retention")
+    _validate_optional("config/roles.yaml", "users")
     return [
         "severity_thresholds.yaml",
         "impact_model.yaml",
@@ -225,6 +396,16 @@ def validate_configs() -> list[str]:
         "alerts.yaml",
         "detection.yaml",
     ]
+
+
+def _validate_optional(relative_path: str, expected_key: str) -> None:
+    path = _ROOT / relative_path
+    if not path.exists():
+        return
+    with open(path, "r") as f:
+        data = yaml.safe_load(f)
+    _require(isinstance(data, dict) and expected_key in data,
+             f"{relative_path}: missing '{expected_key}' key")
 
 
 if __name__ == "__main__":

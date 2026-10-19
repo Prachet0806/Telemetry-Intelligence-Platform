@@ -24,5 +24,5 @@ def test_main_aborts_on_empty_ingestion(monkeypatch):
         lambda raw_path, rejected_path: (pd.DataFrame(), {"data_source": "local"}),
     )
 
-    with pytest.raises(RuntimeError, match="no valid events"):
-        rp.main()
+    # Empty ingestion returns a non-zero exit code (no traceback).
+    assert rp.main([]) == 1

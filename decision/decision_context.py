@@ -39,11 +39,15 @@ class DecisionContext:
     supervised_recall: float | None = None
     supervised_f1: float | None = None
     supervised_positive_support: int | None = None
+    labels_independently_reviewed: bool = False
 
     def has_supervised_model(self) -> bool:
         return (
             self.supervised_recall is not None
+            and self.supervised_precision is not None
+            and self.supervised_f1 is not None
             and self.supervised_positive_support is not None
+            and self.supervised_positive_support > 0
         )
 
     def _supervised_is_trustworthy(self) -> bool:
@@ -54,6 +58,21 @@ class DecisionContext:
         quality_ok = f1 is not None and f1 >= MIN_POSITIVE_F1
         return support_ok and quality_ok
 
+    def validate_ranges(self) -> None:
+        """Fail fast on unit swaps or nonsensical signal values."""
+        if not 0 <= self.baseline_flag_rate <= 1:
+            raise ValueError(f"baseline_flag_rate must be in [0, 1], got {self.baseline_flag_rate}")
+        if not 0 <= self.anomaly_rate <= 1:
+            raise ValueError(f"anomaly_rate must be in [0, 1], got {self.anomaly_rate}")
+        if not 0 <= self.high_risk_percentage <= 100:
+            raise ValueError(
+                f"high_risk_percentage must be in [0, 100], got {self.high_risk_percentage}"
+            )
+        if self.total_events < 0:
+            raise ValueError(f"total_events must be >= 0, got {self.total_events}")
+        if self.admin_scope_rate is not None and not 0 <= self.admin_scope_rate <= 1:
+            raise ValueError(f"admin_scope_rate must be in [0, 1], got {self.admin_scope_rate}")
+
     def confidence_label(self) -> str:
         """
         Human-readable confidence label, gated on actual evidence quality.
@@ -63,10 +82,9 @@ class DecisionContext:
         - Model ran and passed gates      -> High
         """
         if not self.has_supervised_model():
-            return (
-                "Moderate (rules + unsupervised only; "
-                "supervised model unavailable)"
-            )
+            if not self.labels_independently_reviewed:
+                return "Provisional (no independently reviewed labels; model and rule agreement is not threat accuracy)"
+            return "Moderate (rules + unsupervised only; supervised model unavailable)"
 
         if self.supervised_positive_support is not None and (
             self.supervised_positive_support < MIN_POSITIVE_SUPPORT
@@ -82,5 +100,8 @@ class DecisionContext:
                 "Low-Moderate (supervised model underperforms on the "
                 "minority class; treat model signals as indicative only)"
             )
+
+        if not self.labels_independently_reviewed:
+            return "Provisional (strong agreement with supplied labels; labels are not independently reviewed)"
 
         return "High (multi-signal validation: rules + unsupervised + supervised)"

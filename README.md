@@ -59,7 +59,15 @@ ai-telemetry-intelligence/
 │ ├── playbooks.yaml ← Severity → action lists
 │ ├── cloudwatch.yaml ← AWS log group, lookback, region
 │ ├── detection.yaml ← Isolation Forest contamination / seed
-│ └── alerts.yaml ← Severity alerting (webhook + threshold)
+│ ├── alerts.yaml ← Severity alerting (webhook + threshold)
+│ ├── severity_weights.yaml ← Weighted severity score (#10)
+│ ├── drift.yaml ← PSI/KS/label-delta thresholds (#8)
+│ ├── scheduler.yaml ← APScheduler interval + watermark catch-up (#2)
+│ ├── roles.yaml ← Dashboard users + page ACLs (#18)
+│ └── retention.yaml ← History/artifact TTLs (prune.py)
+│
+├── api/
+│ └── main.py ← FastAPI: /health, /brief/latest, /brief/{id}, /runs, /export/csv|pdf (#16)
 │
 ├── data/
 │ ├── raw/ ← Telemetry input (JSON)
@@ -68,9 +76,12 @@ ai-telemetry-intelligence/
 ├── ingestion/
 │ ├── load_logs.py ← Core JSON loader + schema validation
 │ ├── validate_schema.py ← Field-level schema enforcement
-│ ├── cloudwatch_connector.py ← boto3 CloudWatch fetcher (paginated)
+│ ├── cloudwatch_connector.py ← boto3 CloudWatch fetcher (paginated, watermark-aware)
 │ ├── cloudwatch_normalizer.py ← CloudTrail → internal schema mapping
-│ └── source_router.py ← Fallback orchestrator (CW → local → mock)
+│ ├── base.py ← SourceAdapter protocol (#3)
+│ ├── csv_adapter.py ← Local CSV/Parquet source (#3)
+│ ├── s3_adapter.py ← S3 CSV source (#3)
+│ └── source_router.py ← Fallback orchestrator (CW → local → mock) + watermark read
 │
 ├── processing/
 │ ├── feature_engineering.py ← Behavioral + temporal features
@@ -79,42 +90,53 @@ ai-telemetry-intelligence/
 ├── ml/
 │ ├── supervised.py ← Logistic Regression risk classifier
 │ ├── unsupervised.py ← Isolation Forest anomaly detection
-│ └── evaluation.py ← Baseline vs ML comparison
+│ ├── evaluation.py ← Baseline vs ML + PR-AUC + threshold selection (#7)
+│ ├── drift.py ← PSI/KS/label-drift vs reference_stats.json (#8)
+│ └── model_selection.py ← LR/RF/XGBoost PR-AUC CV, reporting-only (#24)
 │
 ├── decision/ ← Decision Intelligence Layer
 │ ├── decision_context.py ← DecisionContext dataclass (signal snapshot)
-│ ├── severity_engine.py ← Threshold-based severity assessment
-│ ├── impact_estimator.py ← Heuristic financial exposure model
+│ ├── severity_engine.py ← Cascade + weighted score_severity (#10)
+│ ├── impact_estimator.py ← Heuristic exposure + estimate_impact_detailed (#12)
 │ ├── action_recommender.py ← Playbook lookup by severity
-│ ├── playbook_registry.py ← Loads + caches playbooks.yaml
-│ └── config_validation.py ← Fail-fast YAML config checks
+│ ├── playbook_registry.py ← Loads + enriched triage actions (#13)
+│ ├── triage_store.py ← SQLite triage status (init_run/set_status/get_run)
+│ └── config_validation.py ← Fail-fast YAML config checks (all configs)
 │
 ├── reporting/
 │ ├── client_brief_builder.py ← Consulting-grade structured brief
 │ ├── stakeholder_views.py ← Four audience-specific adapters
 │ ├── narrative_generator.py ← GenAI or deterministic narrative
-│ └── notifications.py ← Severity webhook alerts
+│ ├── notifications.py ← Severity webhook alerts
+│ ├── history_store.py ← SQLite run history + watermark (#11, WAL-safe)
+│ ├── export_utils.py ← CSV/PDF brief export (#16)
+│ └── json_logging.py ← Structured JSON logging (--json-logs)
 │
 ├── explainability/
 │ ├── genai_explainer.py ← Gemini API wrapper (optional)
+│ ├── attribution.py ← Lightweight feature attribution (#23)
 │ └── prompt_templates.py ← EXPLANATION_PROMPT + DECISION_NARRATIVE_PROMPT
 │
 ├── dashboard/
-│ ├── app.py ← Home page (hero + source badge + nav)
+│ ├── app.py ← Home page (hero + source badge + nav + dev-defaults warning)
+│ ├── auth.py ← RBAC gate: check_login/dev_defaults_in_use/warn_if_dev_defaults (#18)
 │ ├── components/
 │ │ ├── severity_card.py ← Colour-coded risk badge
 │ │ ├── impact_card.py ← USD exposure metric
 │ │ ├── action_panel.py ← Interactive runbook checklist
-│ │ └── metrics_table.py ← Ingestion / ML metric tables
+│ │ └── metrics_table.py ← Ingestion / ML / threshold-selection tables
 │ └── pages/
-│ ├── 1_Operations.py ← SRE / Platform engineering view
-│ ├── 2_Security.py ← SOC / Security engineering view
-│ ├── 3_Executive.py ← C-Suite / Board view
-│ └── 4_Technical.py ← Engineering / ML diagnostics
+│ ├── 1_Operations.py ← SRE view (runbook + triage status controls)
+│ ├── 2_Security.py ← SOC view
+│ ├── 3_Executive.py ← C-Suite view (exposure + sensitivity range chart)
+│ ├── 4_Technical.py ← Engineering view (PR-AUC + drift)
+│ └── 5_History.py ← Trends: exposure/anomaly time-series + run inspector (#17)
 │
 ├── scripts/
-│ ├── run_pipeline.py ← End-to-end pipeline orchestrator (runnable module)
-│ └── generate_mock_telemetry.py ← Synthetic data with latent actor risk
+│ ├── run_pipeline.py ← End-to-end pipeline (runnable module; --offline/--dry-run/--skip-alerts/--json-logs/--retrain)
+│ ├── scheduler.py ← APScheduler loop (config/scheduler.yaml) + watermark catch-up (#2)
+│ ├── prune.py ← Retention TTL pruning (config/retention.yaml)
+│ └── generate_mock_telemetry.py ← Synthetic data with --scenario attack/drift
 │
 ├── tests/ ← Pytest suite (schema, ML, decision layer, routing)
 ├── .github/workflows/ci.yml ← Lint-free compile + config gate + tests
@@ -188,18 +210,20 @@ After ML detection, a dedicated layer translates signals into business decisions
 
 Reads thresholds from `config/severity_thresholds.yaml`:
 
-| Level | When triggered |
+| Level | When triggered (>= threshold) |
 |---|---|
-| **Critical** | High-risk % > 20% or anomaly rate > 15% |
-| **High** | High-risk % > 10% |
-| **Moderate** | Anomaly rate > 8% |
+| **Critical** | High-risk % >= 20% or anomaly rate >= 15% |
+| **High** | High-risk % >= 10% or sustained elevated admin-scope activity |
+| **Moderate** | Anomaly rate >= 8% or admin-scope rate >= 20% |
 | **Low** | All signals below thresholds |
 
 ### Impact Estimator (`decision/impact_estimator.py`)
 
-Applies heuristic multipliers from `config/impact_model.yaml` to a base operational incident cost to produce an estimated financial exposure in USD. Multipliers fire on high-risk event %, anomaly rate, event volume (blast radius), and admin-scope activity rate.
+Applies heuristic multipliers from `config/impact_model.yaml` to a base operational incident cost to produce an estimated financial exposure in USD. Multipliers fire on high-risk event %, anomaly rate, event volume (blast radius), and admin-scope activity rate. These multipliers are organisational heuristics, not calibrated losses.
 
-Because multipliers can be driven by background dataset characteristics, the result is **clamped to a per-severity cap** (`impact_caps` in the same YAML) so the reported exposure can never contradict the assessed severity tier — e.g. a Low-severity run will not headline a $600K exposure.
+`estimate_impact_detailed` additionally returns a ±`sensitivity_pct` (default 25%) low/high range plus pro-rated breakdowns by event category/region — surfaced as `Estimated Financial Exposure Range` + `Impact Breakdown` in the brief and as a sensitivity chart on the Executive page.
+
+Because multipliers can be driven by background dataset characteristics, the result is **always clamped to a per-severity cap** (`impact_caps` in the same YAML, defaulting to the Low cap when no severity is passed) so the reported exposure can never contradict the assessed severity tier — e.g. a Low-severity run will not headline a $600K exposure.
 
 ### Action Recommender (`decision/action_recommender.py`)
 
@@ -251,11 +275,19 @@ streamlit run dashboard/app.py
 
 | Page | Audience | Key Components |
 |---|---|---|
-| **Home** | All | Decision brief hero, source badge, navigation |
-| ** Operations** | SRE / Platform Eng | Severity card, action checklist, urgency window |
+| **Home** | All | Decision brief hero, source badge, RBAC login, navigation |
+| ** Operations** | SRE / Platform Eng | Severity card, action checklist, triage status controls, urgency window |
 | ** Security** | SOC / Security Eng | Detection charts, model report, feature explorer |
-| ** Executive** | C-Suite / Board | Risk level, exposure, GenAI consulting narrative |
-| **⚙ Technical** | Engineering / ML | Full metrics, label distribution, raw JSON |
+| ** Executive** | C-Suite / Board | Risk level, exposure + sensitivity range chart, GenAI consulting narrative |
+| **⚙ Technical** | Engineering / ML | Full metrics, PR-AUC, drift, raw JSON |
+| **History** | All (RBAC-gated) | Exposure/anomaly time-series, run table, per-run brief inspector |
+
+RBAC lives in `dashboard/auth.py` + `config/roles.yaml` and is enforced before
+the Home and stakeholder pages load telemetry. The environment example selects
+`development` for local use; set `APP_ENV=production` and all four `DASH_PASS_*`
+values before exposing the dashboard. Compose defaults to production if
+`APP_ENV` is unset. Local development may use the documented fallback passwords.
+`data/history.db` is local-only (gitignored).
 
 ---
 
@@ -277,12 +309,15 @@ cp .env.example .env
 | Variable | Required | Purpose |
 |---|---|---|
 | `GOOGLE_API_KEY` | Optional | Enables GenAI consulting narratives |
+| `APP_ENV` | Optional | Compose defaults to `production`; use `development` only for a trusted local setup |
 | `AWS_ACCESS_KEY_ID` | Optional | Activates live CloudWatch ingestion |
 | `AWS_SECRET_ACCESS_KEY` | Optional | Activates live CloudWatch ingestion |
 | `AWS_SESSION_TOKEN` | Optional | For temporary STS credentials |
 | `AWS_DEFAULT_REGION` | Optional | Default: `us-east-1` |
 | `CLOUDWATCH_LOG_GROUP` | Optional | Default: `CloudTrail/DefaultLogGroup` |
 | `ALERT_WEBHOOK_URL` | Optional | Webhook for severity alerts (overrides `config/alerts.yaml`) |
+| `DASH_PASS_OPERATOR` / `DASH_PASS_ANALYST` / `DASH_PASS_EXECUTIVE` / `DASH_PASS_ADMIN` | Required in production | Dashboard RBAC passwords; local development may use documented fallback passwords |
+| `API_KEY` | Required in production | Bearer token required for all API data and export routes; `/health` remains public |
 
 ### 3. Run the pipeline
 
@@ -301,7 +336,7 @@ Output (example):
 [INFO] Supervised model saved -> data/processed/supervised_model.joblib
 [INFO] Running Decision Intelligence Layer...
 [DECISION] Severity  : Low
-[DECISION] Exposure  : $600,000.00
+[DECISION] Exposure  : $250,000.00
 [DECISION] Actions   : 2 recommended
 [SUCCESS] Pipeline executed successfully
 ```
@@ -320,13 +355,16 @@ After a successful run, `data/processed/` contains:
 
 | File | Contents |
 |---|---|
-| `features.parquet` | Engineered feature dataset |
-| `metrics.json` | Ingestion, ML, and `decision_intelligence` block |
+| `latest.json` | Atomic pointer to the most recently committed run |
+| `runs/<run_id>/features.parquet` | Immutable engineered feature dataset for that run |
+| `runs/<run_id>/metrics.json` | Ingestion, ML, and `decision_intelligence` snapshot for that run |
+| `runs/<run_id>/manifest.json` | Run identity, data source, and artifact inventory |
 | `supervised_model.joblib` | Trained risk classifier (if label variety sufficient) |
 | `unsupervised_model.joblib` | Isolation Forest anomaly detector |
 | `rejected_events.json` | Schema-invalid events (if any) |
 
-`metrics.json` structure (top-level keys):
+The dashboard and API resolve these artifacts through `latest.json`; legacy flat
+files are read only when no pointer exists. `metrics.json` structure (top-level keys):
 ```
 ingestion • baseline • unsupervised • supervised •
 genai_summary • genai_status • baseline_evaluation •
@@ -390,3 +428,41 @@ not a pure function of the features (label-leakage guard).
 
 GitHub Actions runs compile checks, the config gate (`python -m decision.config_validation`),
 and pytest on every push/PR (`.github/workflows/ci.yml`).
+
+---
+
+## API, Scheduling & Retention
+
+**API** (`api/main.py`, `uvicorn api.main:app --host 0.0.0.0 --port 8000`):
+`/health` (includes `runs_recorded`), `/brief/latest`, `/brief/{id}` (404 on
+unknown id), `/runs?limit=`, `/export/csv`, `/export/pdf`. Every route except
+`/health` requires `Authorization: Bearer <key>` when `APP_ENV=production`; a
+missing production key fails closed. Development mode permits unauthenticated
+data access. The runs limit is bounded to 1–200.
+
+**Scheduler** (`scripts/scheduler.py` + `config/scheduler.yaml`): APScheduler loop
+(`interval_hours`, `run_on_start`) invoking `run_pipeline.py`; after immutable
+artifact and history publication, the pipeline commits processed event IDs and a
+monotonic watermark together. `source_router` reads that watermark and applies a
+configurable overlap window. Oversized queries fail closed; durable page-token
+resume and live AWS catch-up validation remain open.
+
+**Retention** (`scripts/prune.py` + `config/retention.yaml`): TTL-prunes `runs`
+older than `history_days` plus stale `*.tmp` artifacts; run on cron.
+
+---
+
+## Ops Runbook
+
+```
+1. python scripts/run_pipeline.py --offline --dry-run --skip-alerts  # smoke
+2. python scripts/run_pipeline.py --offline                           # real run
+3. streamlit run dashboard/app.py                                      # dashboard :8501
+4. uvicorn api.main:app --host 0.0.0.0 --port 8000                    # API :8000
+5. python scripts/scheduler.py                                         # scheduled runs (or docker compose up)
+6. python scripts/prune.py                                             # retention (cron)
+```
+
+Docker: `docker compose up` runs scheduler + dashboard + api with
+`restart: unless-stopped`, `env_file: .env`, and `./data:/app/data` persistence;
+the image carries a `HEALTHCHECK` on the API `/health` endpoint.

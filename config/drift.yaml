@@ -1,0 +1,6 @@
+# config/drift.yaml
+drift:
+  psi_threshold: 0.2
+  ks_threshold: 0.1
+  label_rate_delta: 0.05
+  min_reference_events: 500

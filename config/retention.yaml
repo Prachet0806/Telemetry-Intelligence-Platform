@@ -1,0 +1,6 @@
+# config/retention.yaml
+retention:
+  raw_days: 90
+  processed_days: 60
+  history_days: 365
+  watermark_keep: true

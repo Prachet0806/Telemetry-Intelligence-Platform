@@ -12,6 +12,7 @@ def build_client_brief(
     impact: float,
     actions: list[str],
     ctx: DecisionContext,
+    label_basis: str = "Source-provided labels; independent review not established.",
 ) -> dict:
     """
     Build a structured consulting-grade decision brief.
@@ -48,21 +49,50 @@ def build_client_brief(
         "Low": "No immediate review required; continue routine monitoring.",
     }
 
+    if not isinstance(severity, str) or not severity:
+        raise ValueError("severity must be a non-empty string")
+    if impact is None or not isinstance(impact, (int, float)):
+        raise TypeError("impact must be a number")
+    try:
+        impact_val = float(impact)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"impact must be numeric: {exc}") from exc
+    if impact_val != impact_val:  # NaN
+        raise ValueError("impact must not be NaN")
+    if impact_val < 0:
+        raise ValueError("impact must be non-negative")
+    if not isinstance(actions, list):
+        raise TypeError("actions must be a list of strings")
+
     return {
         "Executive Summary": (
             f"Operational telemetry analysis indicates a {severity.upper()} risk posture. "
             f"{review_guidance.get(severity, 'Human review is recommended.')}"
         ),
         "Severity": severity,
-        "Estimated Financial Exposure": f"${impact:,.2f}",
-        "Estimated Financial Exposure Raw": impact,
+        "Estimated Financial Exposure": f"${impact_val:,.2f}",
+        "Estimated Financial Exposure Raw": impact_val,
         "Recommended Actions": actions,
         "Confidence Level": ctx.confidence_label(),
+        "High-Risk Label Basis": label_basis,
+        "Impact Basis": "Illustrative heuristic estimate; not calibrated against realized losses.",
         "Signal Summary": {
             "Anomaly Rate": f"{ctx.anomaly_rate:.1%}",
             "High-Risk Event %": f"{ctx.high_risk_percentage:.1f}%",
             "Baseline Flag Rate": f"{ctx.baseline_flag_rate:.1%}",
             "Total Events Analyzed": ctx.total_events,
+        },
+        # Machine-readable contract for dashboard/pages (never parse the
+        # formatted strings above with float() — they contain "%").
+        "Signal Summary Raw": {
+            "anomaly_rate": float(ctx.anomaly_rate),
+            "high_risk_percentage": float(ctx.high_risk_percentage),
+            "baseline_flag_rate": float(ctx.baseline_flag_rate),
+            "total_events": int(ctx.total_events),
+            "supervised_precision": ctx.supervised_precision,
+            "supervised_recall": ctx.supervised_recall,
+            "supervised_f1": ctx.supervised_f1,
+            "supervised_positive_support": ctx.supervised_positive_support,
         },
         "Generated At": datetime.now(timezone.utc).isoformat(),
     }

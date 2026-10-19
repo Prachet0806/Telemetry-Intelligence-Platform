@@ -102,7 +102,9 @@ def generate_event(
         k=1
     )[0]
 
-    resource_count = max(1, int(rng.gauss(5, 6)))
+    resource_count = max(0, min(1000, int(rng.gauss(5, 6))))
+    if resource_count < 1:
+        resource_count = 1
     hour = rng.randint(0, 23)
     actor_id = f"{actor_type}_{rng.randint(1, 500)}"
     latent = actor_propensity.get(actor_id, rng.random())
@@ -134,6 +136,7 @@ def generate_dataset(
     output_path: str = "data/raw/telemetry_logs.json",
     seed: int | None = None,
     now: datetime | None = None,
+    scenario: str = "baseline",
 ) -> None:
     """
     Generate synthetic CloudTrail-style telemetry.
@@ -146,19 +149,39 @@ def generate_dataset(
     now : anchor time for event timestamps. Defaults to the current UTC
         time; pass a fixed value (together with `seed`) for byte-identical
         outputs across runs.
+    scenario : baseline | attack | drift | spike — deterministic overlays (#22).
     """
     rng = random.Random(seed)
     anchor = now or datetime.now(timezone.utc)
     actor_propensity = _actor_pool(rng)
 
     events = [generate_event(actor_propensity, rng, anchor) for _ in range(n_events)]
+    # Scenario overlays (#22): deterministic, seeded
+    if scenario == "attack":
+        for e in events[: max(1, n_events // 10)]:
+            e["event_type"] = "iam_change"
+            e["metadata"]["policy_scope"] = "admin"
+            e["metadata"]["resource_count"] = 500
+            e["risk_level"] = "high"
+    elif scenario == "spike":
+        for e in events[: max(1, n_events // 5)]:
+            e["timestamp"] = anchor.isoformat().replace("+00:00", "Z")
+    elif scenario == "drift":
+        for e in events:
+            if rng.random() < 0.3:
+                e["actor_type"] = "service"
+                e["region"] = "eu-west-1"
 
     import os
+    if n_events <= 0:
+        raise ValueError("n_events must be a positive integer")
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    with open(output_path, "w") as f:
+    tmp_path = output_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(events, f, indent=2)
+    os.replace(tmp_path, output_path)
 
-    print(f"Generated {n_events} telemetry events")
+    print(f"Generated {n_events} telemetry events (seed={seed})")
 
 
 if __name__ == "__main__":
@@ -167,10 +190,22 @@ if __name__ == "__main__":
     parser.add_argument("--output-path", default="data/raw/telemetry_logs.json")
     parser.add_argument("--seed", type=int, default=None,
                         help="RNG seed for reproducible datasets.")
+    parser.add_argument("--now", type=str, default=None,
+                        help="Anchor ISO timestamp (e.g. 2026-01-01T00:00:00Z) for reproducible timestamps.")
+    parser.add_argument("--scenario", type=str, default="baseline",
+                        choices=["baseline", "attack", "drift", "spike"])
     args = parser.parse_args()
+
+    anchor = None
+    if args.now:
+        anchor = datetime.fromisoformat(args.now.replace("Z", "+00:00"))
+        if anchor.tzinfo is None:
+            anchor = anchor.replace(tzinfo=timezone.utc)
 
     generate_dataset(
         n_events=args.n_events,
         output_path=args.output_path,
         seed=args.seed,
+        now=anchor,
+        scenario=args.scenario,
     )

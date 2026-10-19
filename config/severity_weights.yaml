@@ -1,0 +1,16 @@
+# config/severity_weights.yaml
+# Weighted severity scoring (#10). Score = sum(w_i * normalized(signal_i)) * 100.
+# Normalization: high_risk_percentage /100; rates already 0-1; volume via log scale.
+severity_weights:
+  weights:
+    high_risk_percentage: 0.35
+    anomaly_rate: 0.25
+    admin_scope_rate: 0.25
+    baseline_flag_rate: 0.15
+  bands:
+    critical: 70
+    high: 50
+    moderate: 30
+  # volume_adjust: +up_to points when total_events exceeds reference volume
+  volume_reference: 10000
+  volume_max_bonus: 5.0

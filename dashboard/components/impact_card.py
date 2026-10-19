@@ -22,11 +22,16 @@ def render_impact_card(impact: float, severity: str) -> None:
     }
     delta_text = delta_map.get(severity, "")
 
+    try:
+        impact_val = float(impact)
+    except (TypeError, ValueError):
+        impact_val = 0.0
+
     col1, col2 = st.columns([1, 2])
     with col1:
         st.metric(
             label="💰 Estimated Financial Exposure",
-            value=f"${impact:,.0f}",
+            value=f"${impact_val:,.0f}",
             help=delta_text,  # use tooltip instead of misusing delta
         )
     with col2:

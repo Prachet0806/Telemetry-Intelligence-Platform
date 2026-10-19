@@ -10,9 +10,16 @@ env/
 # Editor
 .vscode/
 
-# Data artifacts
+# Data artifacts (local-only: history.db is a runtime SQLite store, never committed)
 data/processed/
 data/raw/telemetry_logs.json
+data/history.db
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/processed/reference_stats.json
+data/processed/*.tmp
+data/*.tmp
 
 # Model artifacts
 *.joblib
