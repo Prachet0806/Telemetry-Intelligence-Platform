@@ -53,12 +53,14 @@ def test_min_severity_override():
     assert should_alert("Moderate", cfg)
 
 
-@patch("reporting.notifications.urllib.request.urlopen")
-def test_send_alert_success_on_first_try(mock_urlopen, monkeypatch):
+@patch("reporting.notifications.urllib.request.build_opener")
+def test_send_alert_success_on_first_try(mock_build_opener, monkeypatch):
     monkeypatch.setattr("reporting.notifications._is_url_allowed", lambda _url: True)
     mock_response = MagicMock()
     mock_response.status = 200
-    mock_urlopen.return_value.__enter__.return_value = mock_response
+    mock_opener = MagicMock()
+    mock_opener.open.return_value.__enter__.return_value = mock_response
+    mock_build_opener.return_value = mock_opener
 
     brief = {
         "Severity": "High",
@@ -69,11 +71,11 @@ def test_send_alert_success_on_first_try(mock_urlopen, monkeypatch):
         "Signal Summary": {},
     }
     assert send_severity_alert(brief, _CFG) is True
-    assert mock_urlopen.call_count == 1
+    assert mock_opener.open.call_count == 1
 
 
-@patch("reporting.notifications.urllib.request.urlopen")
-def test_send_alert_retry_then_success(mock_urlopen, monkeypatch):
+@patch("reporting.notifications.urllib.request.build_opener")
+def test_send_alert_retry_then_success(mock_build_opener, monkeypatch):
     monkeypatch.setattr("reporting.notifications._is_url_allowed", lambda _url: True)
     mock_response = MagicMock()
     mock_response.status = 200
@@ -81,10 +83,12 @@ def test_send_alert_retry_then_success(mock_urlopen, monkeypatch):
     # with `with urlopen(...) as response`.
     mock_response.__enter__.return_value = mock_response
     mock_response.__exit__.return_value = False
-    mock_urlopen.return_value.__enter__.return_value = mock_response
+    mock_opener = MagicMock()
+    mock_opener.open.return_value.__enter__.return_value = mock_response
+    mock_build_opener.return_value = mock_opener
 
     # First call fails, second succeeds
-    mock_urlopen.side_effect = [Exception("network error"), mock_response]
+    mock_opener.open.side_effect = [Exception("network error"), mock_response]
 
     brief = {
         "Severity": "High",
@@ -95,13 +99,15 @@ def test_send_alert_retry_then_success(mock_urlopen, monkeypatch):
         "Signal Summary": {},
     }
     assert send_severity_alert(brief, _CFG) is True
-    assert mock_urlopen.call_count == 2
+    assert mock_opener.open.call_count == 2
 
 
-@patch("reporting.notifications.urllib.request.urlopen")
-def test_send_alert_all_retries_fail(mock_urlopen, monkeypatch):
+@patch("reporting.notifications.urllib.request.build_opener")
+def test_send_alert_all_retries_fail(mock_build_opener, monkeypatch):
     monkeypatch.setattr("reporting.notifications._is_url_allowed", lambda _url: True)
-    mock_urlopen.side_effect = Exception("persistent failure")
+    mock_opener = MagicMock()
+    mock_opener.open.side_effect = Exception("persistent failure")
+    mock_build_opener.return_value = mock_opener
 
     brief = {
         "Severity": "High",
@@ -112,7 +118,7 @@ def test_send_alert_all_retries_fail(mock_urlopen, monkeypatch):
         "Signal Summary": {},
     }
     assert send_severity_alert(brief, _CFG) is False
-    assert mock_urlopen.call_count == 2  # retry_attempts=2
+    assert mock_opener.open.call_count == 2  # retry_attempts=2
 
 
 def test_payload_format_slack():
