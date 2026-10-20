@@ -12,7 +12,7 @@ The system is designed around:
 
 * **Separation of concerns** — ingestion, processing, ML, decision, and reporting are fully independent layers
 * **Responsible ML** — ML is decision-support only; no automated enforcement
-* **Graceful degradation** — every layer has a safe fallback (CloudWatch → local → mock; GenAI → deterministic)
+* **Controlled fallback** — development can fall back from CloudWatch to local JSON and then generated mock data; production fails closed when enabled CloudWatch is unavailable or required local input is missing. GenAI summaries fall back to deterministic text.
 * **Multi-stakeholder design** — the same pipeline serves Operations, Security, Executive, and Engineering audiences via purpose-built views
 
 ---
@@ -22,7 +22,7 @@ The system is designed around:
 ```
 Data Source (CloudWatch or Local)
  ↓
- Source Router (auto-selects best source, fallback chain)
+ Source Router (CloudWatch → local JSON → development mock)
  ↓
  Schema Validation & Ingestion
  ↓
@@ -81,7 +81,7 @@ ai-telemetry-intelligence/
 │ ├── base.py ← SourceAdapter protocol (#3)
 │ ├── csv_adapter.py ← Local CSV/Parquet source (#3)
 │ ├── s3_adapter.py ← S3 CSV source (#3)
-│ └── source_router.py ← Fallback orchestrator (CW → local → mock) + watermark read
+│ └── source_router.py ← CloudWatch/local JSON/mock routing + watermark read
 │
 ├── processing/
 │ ├── feature_engineering.py ← Behavioral + temporal features
@@ -178,22 +178,31 @@ CloudTrail events are normalized to this schema automatically via `cloudwatch_no
 
 ## Data Sources & Fallback Chain
 
-The pipeline automatically selects the best available data source:
+In development, the router tries the following sources in order:
 
 ```
 1. AWS CloudWatch Logs (if credentials + log group reachable)
  ↓ fail
 2. Local JSON file (data/raw/telemetry_logs.json — cached real or mock data)
  ↓ missing
-3. Auto-generated mock (generate_mock_telemetry.py — always works, no credentials)
+3. Auto-generated mock (`generate_mock_telemetry.py`, development only)
 ```
 
-On a truly fresh run (no cached file and no CloudWatch credentials), the router
-auto-generates mock data and reports `data_source: "mock"`. Once that data is
-cached to `data/raw/telemetry_logs.json`, subsequent runs report it as `local`.
+If development has no usable local JSON file, the router generates mock data and
+reports `data_source: "mock"`. A later run reads the saved file as `local`.
+This automatic generation is disabled in production. If CloudWatch is enabled
+and unavailable in production, the router fails closed rather than using local
+or mock data. If CloudWatch is disabled, production may use an existing local
+JSON file but will not generate one. `--dry-run` never generates mock input; if
+it needs fallback data, provide an existing local JSON file. With production
+CloudWatch enabled, an unavailable CloudWatch source still fails closed.
+`--offline` forces the local-input path, so CI explicitly creates its smoke
+fixture before running it.
 
 Valid events are deduplicated by `event_id` (first occurrence wins); the number
 of dropped duplicates is reported as `duplicate_events` in the ingestion stats.
+The standalone `CSVAdapter` and `S3Adapter` can read CSV/Parquet and S3-hosted
+CSV when called directly; the automatic router does not select these adapters.
 
 The dashboard displays a source badge on every page:
 - **Live Data** — AWS CloudWatch
@@ -213,7 +222,7 @@ Reads thresholds from `config/severity_thresholds.yaml`:
 | Level | When triggered (>= threshold) |
 |---|---|
 | **Critical** | High-risk % >= 20% or anomaly rate >= 15% |
-| **High** | High-risk % >= 10% or sustained elevated admin-scope activity |
+| **High** | High-risk % >= 10% |
 | **Moderate** | Anomaly rate >= 8% or admin-scope rate >= 20% |
 | **Low** | All signals below thresholds |
 
@@ -239,7 +248,7 @@ Produces a structured brief consumed by all stakeholder views and GenAI narrativ
  "Severity": "High",
  "Estimated Financial Exposure": "$600,000.00",
  "Recommended Actions": ["...", "..."],
- "Confidence Level": "High (multi-signal validation)",
+ "Confidence Level": "Provisional (strong agreement with supplied labels; labels are not independently reviewed)",
  "Signal Summary": { ... }
 }
 ```
@@ -251,7 +260,8 @@ The brief also carries a `Generated At` ISO timestamp so consumers can verify fr
 ## Alerting
 
 When the decision severity meets or exceeds a configurable tier, the pipeline
-posts an alert to a generic webhook (Slack, MS Teams, PagerDuty, ...).
+queues an alert in its SQLite outbox and attempts delivery to a configured
+webhook (Slack, MS Teams, PagerDuty, ...).
 
 Configuration lives in `config/alerts.yaml`:
 
@@ -261,8 +271,10 @@ Configuration lives in `config/alerts.yaml`:
 | `min_severity` | `High` | Alert when severity >= this tier |
 | `webhook_url` | `""` | Incoming webhook URL (env override: `ALERT_WEBHOOK_URL`) |
 
-Alerting is best-effort: delivery failures are logged and never block the pipeline.
-Whether an alert was dispatched is recorded in `metrics.run_metadata.alert_sent`.
+Alerting is best-effort: delivery failures are retried from the outbox and do
+not block the pipeline. The run metrics are written before delivery, so
+`run_metadata.alert_sent` is currently `null`; `alert_status` records the
+pre-dispatch state. The SQLite alert outbox is the delivery record.
 
 ---
 
@@ -327,13 +339,12 @@ python scripts/run_pipeline.py
 
 Output (example):
 ```
-[SOURCE] Using local fallback data.        ← or "cloudwatch", or mock on a fresh run
+[SOURCE] Using local fallback data.        ← CloudWatch or generated mock can also be selected
 [INFO] Ingestion complete
         Data source    : local
         Total events   : 10000
         Valid events   : 10000
         Invalid events : 0
-[INFO] Supervised model saved -> data/processed/supervised_model.joblib
 [INFO] Running Decision Intelligence Layer...
 [DECISION] Severity  : Low
 [DECISION] Exposure  : $250,000.00
@@ -359,26 +370,35 @@ After a successful run, `data/processed/` contains:
 | `runs/<run_id>/features.parquet` | Immutable engineered feature dataset for that run |
 | `runs/<run_id>/metrics.json` | Ingestion, ML, and `decision_intelligence` snapshot for that run |
 | `runs/<run_id>/manifest.json` | Run identity, data source, and artifact inventory |
-| `supervised_model.joblib` | Trained risk classifier (if label variety sufficient) |
-| `unsupervised_model.joblib` | Isolation Forest anomaly detector |
-| `rejected_events.json` | Schema-invalid events (if any) |
+| `runs/<run_id>/supervised_model.joblib` | Trained risk classifier (if label variety sufficient) |
+| `runs/<run_id>/unsupervised_model.joblib` | Isolation Forest anomaly detector |
+| `rejected_events.json` | Schema-invalid events (if any; written by non-dry runs) |
 
 The dashboard and API resolve these artifacts through `latest.json`; legacy flat
 files are read only when no pointer exists. `metrics.json` structure (top-level keys):
 ```
 ingestion • baseline • unsupervised • supervised •
-genai_summary • genai_status • baseline_evaluation •
-decision_intelligence • run_metadata
+label_provenance • supervised_evaluation • genai_summary • genai_status •
+baseline_evaluation • model_selection • drift • attribution • triage_actions •
+severity_weighted • impact_detail • decision_intelligence • run_metadata
 ```
+Some analysis fields are conditional: model selection and attribution can be
+skipped when the required training split/model is unavailable; drift reports a
+warning when no reference snapshot exists.
 
 `baseline_evaluation` scores **both** the deterministic rules and the
 supervised classifier on the identical held-out test split, so the numbers
 are directly comparable (the previous in-sample `baseline_vs_supervised`
 metric was retired because it evaluated only the rules on training data).
 
-`run_metadata` is the audit trail for the run: pipeline version, git commit,
-dependency versions, config file hashes, raw-data hash, run duration, and
-`alert_sent`. The `ingestion` block now also reports `duplicate_events`.
+`label_provenance` and `supervised_evaluation` describe the supplied label
+source and distinguish agreement with those labels from validated
+threat-detection accuracy. `model_selection` compares supported candidates
+using chronological CV for reporting; logistic regression remains the served
+model. `run_metadata` records pipeline version, git commit, dependency versions,
+config hashes, raw-data hash, duration, and alert queue state. `alert_sent` is
+not updated after delivery; consult the SQLite outbox for delivery status.
+The `ingestion` block also reports duplicate counts.
 
 ---
 
@@ -388,14 +408,24 @@ The IAM user or role must have:
 
 ```json
 {
- "Effect": "Allow",
- "Action": [
- "logs:FilterLogEvents",
- "logs:DescribeLogGroups"
- ],
- "Resource": "arn:aws:logs:*:*:log-group:CloudTrail/*"
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "logs:DescribeLogGroups",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "logs:FilterLogEvents",
+      "Resource": "arn:aws:logs:*:*:log-group:CloudTrail/*"
+    }
+  ]
 }
 ```
+`DescribeLogGroups` does not support resource-level scoping; `FilterLogEvents`
+can be scoped to the log-group ARN. Replace the example ARN pattern with the
+specific log groups the deployment needs.
 
 ---
 
@@ -404,12 +434,12 @@ The IAM user or role must have:
 | Principle | How it's applied |
 |---|---|
 | **No automated enforcement** | ML and decision layer are advisory only |
-| **Graceful fallback everywhere** | CloudWatch → local → mock; GenAI → deterministic |
+| **Controlled fallback** | Development: CloudWatch → local JSON → mock; production fails closed when enabled CloudWatch is unavailable or local input is missing |
 | **Config over code** | Thresholds, multipliers, playbooks, and anomaly settings are YAML files |
 | **Audience-aware outputs** | Same pipeline, four distinct stakeholder views |
 | **Interpretable decisions** | Cost model and severity rules use explicit formulas, not ML |
-| **Human-in-the-loop** | Confidence labels are gated on real model quality (support + minority-class F1) |
-| **Non-circular labels** | `risk_level` depends on latent actor state / event-id jitter, never solely on exported ML features |
+| **Human-in-the-loop** | Confidence requires independently reviewed labels as well as adequate positive support and minority-class F1; current pipeline labels remain provisional |
+| **Label provenance** | Mock labels use latent actor propensity; CloudWatch normalization derives labels by rules and local labels are source-provided. These labels are not independently adjudicated by default. |
 
 ---
 
@@ -427,16 +457,19 @@ observable feature tuples carry mixed risk labels — i.e. the supervised target
 not a pure function of the features (label-leakage guard).
 
 GitHub Actions runs compile checks, the config gate (`python -m decision.config_validation`),
-and pytest on every push/PR (`.github/workflows/ci.yml`).
+pytest, a deterministic 500-event fixture-backed offline dry-run, and a Docker
+build on every push/PR (`.github/workflows/ci.yml`).
 
 ---
 
 ## API, Scheduling & Retention
 
 **API** (`api/main.py`, `uvicorn api.main:app --host 0.0.0.0 --port 8000`):
-`/health` (includes `runs_recorded`), `/brief/latest`, `/brief/{id}` (404 on
-unknown id), `/runs?limit=`, `/export/csv`, `/export/pdf`. Every route except
-`/health` requires `Authorization: Bearer <key>` when `APP_ENV=production`; a
+`/health` (readiness checks for the latest snapshot and history store),
+`/brief/latest`, `/brief/{id}` (404 on unknown id), `/runs?limit=`,
+`/export/csv`, `/export/pdf`. `/health` returns 503 until a snapshot and usable
+history store exist. Every route except `/health` requires
+`Authorization: Bearer <key>` when `APP_ENV=production`; a
 missing production key fails closed. Development mode permits unauthenticated
 data access. The runs limit is bounded to 1–200.
 
@@ -447,8 +480,10 @@ monotonic watermark together. `source_router` reads that watermark and applies a
 configurable overlap window. Oversized queries fail closed; durable page-token
 resume and live AWS catch-up validation remain open.
 
-**Retention** (`scripts/prune.py` + `config/retention.yaml`): TTL-prunes `runs`
-older than `history_days` plus stale `*.tmp` artifacts; run on cron.
+**Retention** (`scripts/prune.py` + `config/retention.yaml`): `history_days`
+prunes history and source-event database records; `processed_days` prunes old
+run snapshots and stale staging artifacts while preserving the latest snapshot.
+`raw_days` is configured but currently unused. Run the pruner on a schedule.
 
 ---
 
@@ -459,10 +494,13 @@ older than `history_days` plus stale `*.tmp` artifacts; run on cron.
 2. python scripts/run_pipeline.py --offline                           # real run
 3. streamlit run dashboard/app.py                                      # dashboard :8501
 4. uvicorn api.main:app --host 0.0.0.0 --port 8000                    # API :8000
-5. python scripts/scheduler.py                                         # scheduled runs (or docker compose up)
+5. python scripts/scheduler.py                                         # only when scheduler.enabled is true
 6. python scripts/prune.py                                             # retention (cron)
 ```
 
-Docker: `docker compose up` runs scheduler + dashboard + api with
-`restart: unless-stopped`, `env_file: .env`, and `./data:/app/data` persistence;
-the image carries a `HEALTHCHECK` on the API `/health` endpoint.
+By default, `docker compose up` starts the dashboard and API. The pipeline
+service is behind the `scheduler` Compose profile and `scheduler.enabled` is
+false in `config/scheduler.yaml`; to run it, enable the scheduler in that file
+and start the profile with `docker compose --profile scheduler up`. Compose
+services define their own health checks. The Docker image has no image-level
+`HEALTHCHECK` instruction.

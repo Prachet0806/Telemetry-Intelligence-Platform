@@ -108,7 +108,8 @@ PHASE 4 - Scale & operations
    **Status: partial** (`scripts/scheduler.py` + `config/scheduler.yaml`;
    CloudWatch watermark advances only after a persisted live-source run and a
    capped query fails closed instead of silently publishing a truncated batch.
-   Durable page-token resume and event-ID checkpointing remain open).
+   Event-ID checkpointing is implemented and committed after publication;
+   durable AWS page-token resume and live catch-up validation remain open).
 8. **Export & API** — PDF/CSV reports plus a FastAPI endpoint serving decision briefs.
    **Status: implemented** (`api/main.py`: `/health`, `/brief/latest`,
    `/brief/{id}`, `/runs`, `/export/csv|pdf`; `reporting/export_utils.py`;
@@ -123,23 +124,26 @@ PHASE 4 - Scale & operations
 
 ## 7. Phase 4 - Scale & operations
 
-11. **Containerization & CI/CD** — Dockerfile/compose, GitHub Actions (lint, test,
-    pipeline smoke run).
+11. **Containerization & CI/CD** — Dockerfile/compose, GitHub Actions (syntax,
+    config validation, tests, fixture-backed pipeline smoke run).
     **Status: implemented** (`Dockerfile`, `docker-compose.yml` with
     pipeline/scheduler + dashboard + api services, `restart: unless-stopped`,
     `./data:/app/data` persistence; CI compiles, validates configs, runs pytest,
-    dry-run smoke, and builds the image).
+    generates a deterministic smoke fixture, runs the offline dry-run, and builds
+    the image. No lint step is configured. The scheduler service requires the
+    `scheduler` Compose profile and `scheduler.enabled: true` in config.)
 12. **Drift monitoring & retraining** — feature/label distribution checks with alerts
     and retraining triggers.
     **Status: implemented** (`ml/drift.py` PSI + KS + label-rate vs
     `reference_stats.json`; `--retrain` refreshes the reference; `drift.yaml`
     thresholds validated at startup; scipy optional).
-13. **Additional data sources** — S3 CloudTrail, EventBridge, local CSV/Parquet behind a
-    pluggable source adapter.
-    **Status: implemented** (`ingestion/base.py` `SourceAdapter` protocol +
-    `csv_adapter.py` + `s3_adapter.py`; `source_router` documents standalone vs
-    CloudWatch→local→mock chain; watermark-aware `start_time`/`end_time`
-    supported by both adapters).
+13. **Additional data sources** — wire S3 CloudTrail/EventBridge and local
+    CSV/Parquet into the automatic router behind a pluggable source adapter.
+    **Status: partial** (`ingestion/base.py`, `csv_adapter.py`, and `s3_adapter.py`
+    provide a protocol and callable standalone adapters; `source_router` does not
+    select them, and there is no EventBridge adapter. The automatic route remains
+    CloudWatch → local JSON → development mock. CSV/Parquet and S3 ingestion
+    require explicit adapter use and integration into routing remains open).
 14. **Role-based access** — stakeholder-gated pages.
    **Status: implemented** (`dashboard/auth.py` + `config/roles.yaml`; page guards
    run before telemetry loads; default passwords work only in development mode).
@@ -148,16 +152,23 @@ PHASE 4 - Scale & operations
 
 - Scenario-driven mock generator (attack/drift scenarios with deterministic seeds)
   — **implemented** (`scripts/generate_mock_telemetry.py --scenario`).
-- SHAP/LIME feature attribution — **implemented (lightweight)** as
-  `explainability/attribution.top_features` (model-coefficient/importance based).
-- Model selection & hyperparameter tuning (RF/XGBoost/SVM + CV) — **implemented
-  (reporting-only)** as `ml/model_selection.select_best_model` (PR-AUC CV; LR
-  remains the served model).
-- Structured JSON logging + pipeline health metrics endpoint — **implemented**
-  (`reporting/json_logging.py --json-logs`; `GET /health` reports
+- Feature attribution — **implemented (limited)** as `explainability/attribution.top_features`:
+  optional SHAP when installed, otherwise permutation importance. LIME is not
+  implemented; this output is an explanatory ranking, not causal attribution.
+- Model comparison — **implemented (reporting-only)** as
+  `ml/model_selection.select_best_model`: chronological PR-AUC CV compares
+  logistic regression and random forest (plus XGBoost when installed). It does
+  not search hyperparameters or include SVM; logistic regression remains the
+  served model.
+- Structured JSON logging + API readiness endpoint — **implemented**
+  (`reporting/json_logging.py --json-logs`; `GET /health` reports latest-snapshot
+  and history-store checks and can return 503; it does not report
   `runs_recorded`).
-- Data retention / archival policies — **implemented** (`scripts/prune.py` +
-  `config/retention.yaml`; run on cron for TTL pruning).
+- Data retention — **implemented (partial coverage)** (`scripts/prune.py`):
+  `history_days` prunes database history/source-event rows, and `processed_days`
+  prunes old snapshots/staging data while preserving the latest snapshot.
+  `raw_days` is configured but unused; raw-data archival/deletion is not
+  implemented.
 
 ## 9. Impact x Effort x Timeline matrix
 
@@ -180,12 +191,12 @@ PHASE 4 - Scale & operations
 | 17 | Historical dashboards | M | M | 2-4 days | **implemented** |
 | 21 | Containerization & CI/CD | H | M | 3-5 days | **implemented** |
 | 8 | Drift monitoring & retraining | H | L | 1-2 weeks | **implemented** |
-| 3 | Additional data sources | M | M | 3-5 days | **implemented** |
+| 3 | Additional data sources | M | M | 3-5 days | **partial** (standalone CSV/S3 adapters; not wired into router; no EventBridge adapter) |
 | 18 | Role-based access | M | M | 2-3 days | **implemented** |
 | 22 | Scenario mock generator | M | M | 2-3 days | **implemented** |
-| 23 | SHAP/LIME attribution | M | M | 3-5 days | **implemented (lightweight)** |
-| 24 | Model selection & tuning | M | M | 3-5 days | **implemented (reporting-only)** |
-| 25 | JSON logging & health metrics | L-M | S | 1-2 days | **implemented** |
-| 26 | Retention / prune | L-M | S | 1-2 days | **implemented** |
+| 23 | Feature attribution | M | M | 3-5 days | **partial** (optional SHAP or permutation importance; no LIME) |
+| 24 | Model selection & tuning | M | M | 3-5 days | **partial** (candidate comparison only; no hyperparameter search or SVM) |
+| 25 | JSON logging & health endpoint | L-M | S | 1-2 days | **implemented** (readiness checks; no run count) |
+| 26 | Retention / prune | L-M | S | 1-2 days | **partial** (`raw_days` unused; history and processed artifacts pruned) |
 
 Effort scale: S = <=2 days, M = 3-5 days, L = 1-2 weeks.
