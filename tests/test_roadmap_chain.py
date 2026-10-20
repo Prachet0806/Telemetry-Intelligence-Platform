@@ -16,7 +16,9 @@ def test_eval_pr_auc_and_threshold():
     sel = select_threshold(y, p)
     assert 0 <= sel["best_threshold"] <= 1 and sel["pr_auc"] > 0.5
     r = evaluate_models_on_holdout(y, [0, 0, 1, 1, 0, 0], [0, 0, 1, 1, 0, 1], supervised_proba=p)
-    assert "threshold_selection" in r and "pr_auc" in r["supervised_model"]
+    assert "threshold_selection" not in r
+    assert r["supervised_model"]["decision_threshold"] == 0.5
+    assert "pr_auc" in r["supervised_model"]
 
 
 def test_expanded_features_present(events_df):
@@ -50,6 +52,7 @@ def test_triage_enriched_and_store(tmp_path):
     assert all({"id", "title", "owner", "priority"} <= set(a) for a in enriched)
     db = tmp_path / "t.db"
     init_run("r1", enriched, db_path=db)
+    set_status("r1", enriched[0]["id"], "in_progress", db_path=db)
     set_status("r1", enriched[0]["id"], "done", db_path=db)
     rows = get_run("r1", db_path=db)
     assert rows[0]["status"] in ("open", "done")
@@ -76,7 +79,7 @@ def test_drift_and_attribution(events_df):
     if int(y.sum()) >= 2 and int((y == 0).sum()) >= 2:
         save_reference(X.head(200), y.head(200))
         assert "drift" in check_drift(X.head(200), y.head(200))
-        m, _, _ = train_supervised_model(X, y)
+        m, _, _ = train_supervised_model(X, y, time_values=events_df["timestamp"])
         if m is not None:
             t = top_features(m, X.head(100), y.head(100))
             assert t["features"]
@@ -87,8 +90,9 @@ def test_model_selection_and_adapters(tmp_path):
     from ml.model_selection import select_best_model
     rng = np.random.RandomState(0)
     X = pd.DataFrame(rng.randn(60, 4), columns=list("abcd"))
-    y = pd.Series([0] * 30 + [1] * 30)
-    name, _, scores = select_best_model(X, y)
+    y = pd.Series([i % 2 for i in range(60)])
+    times = pd.date_range("2026-01-01", periods=len(X), freq="min", tz="UTC")
+    name, _, scores = select_best_model(X, y, time_values=times)
     assert name in scores
     from ingestion.csv_adapter import CSVAdapter
     p = tmp_path / "e.csv"
@@ -96,7 +100,7 @@ def test_model_selection_and_adapters(tmp_path):
     assert CSVAdapter(str(p)).fetch()[0]["event_id"] == "x"
 
 
-def test_api_and_export_and_auth():
+def test_api_and_export_and_auth(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
     from api.main import app
     from reporting.export_utils import brief_to_csv, brief_to_pdf_bytes
@@ -104,8 +108,15 @@ def test_api_and_export_and_auth():
          "Confidence Level": "High", "Generated At": "now", "Recommended Actions": ["a"],
          "Signal Summary": {"Anomaly Rate": "1%"}}
     assert "Severity" in brief_to_csv(b) and brief_to_pdf_bytes(b).startswith(b"%PDF")
+    monkeypatch.setattr("reporting.history_store.storage_status", lambda: "missing")
+    monkeypatch.setattr(
+        "reporting.run_store.latest_artifact_path",
+        lambda *_args: tmp_path / "missing-metrics.json",
+    )
     c = TestClient(app)
-    assert c.get("/health").status_code == 200
+    health = c.get("/health")
+    assert health.status_code == 503
+    assert health.json()["status"] == "degraded"
     from dashboard.auth import check_login, allowed_pages
     assert check_login("admin", "admin123") == "admin"
     assert "Technical" in allowed_pages("admin")

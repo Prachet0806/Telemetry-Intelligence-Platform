@@ -29,7 +29,7 @@ def test_confidence_without_supervised_model():
     from tests.conftest import make_ctx
 
     ctx = make_ctx()
-    assert ctx.confidence_label().startswith("Moderate")
+    assert ctx.confidence_label().startswith("Provisional")
     assert not ctx.has_supervised_model()
 
 
@@ -55,6 +55,7 @@ def test_confidence_high_only_when_quality_gates_pass():
         supervised_recall=0.75,
         supervised_f1=0.77,
         supervised_positive_support=120,
+        labels_independently_reviewed=True,
     )
     assert good.confidence_label().startswith("High")
 

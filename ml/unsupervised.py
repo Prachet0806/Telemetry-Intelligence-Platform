@@ -48,7 +48,6 @@ def train_unsupervised_model(
     # from later events so training rows do not inflate the monitoring signal.
     n = len(X_arr)
     if time_values is not None:
-        import pandas as pd
         times = pd.to_datetime(pd.Series(time_values), utc=True, errors="coerce")
         if len(times) != n or times.isna().all():
             raise ValueError("time_values must contain one parseable timestamp per row")

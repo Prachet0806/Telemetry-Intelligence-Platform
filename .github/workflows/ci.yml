@@ -22,7 +22,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Syntax check (compileall)
-        run: python -m compileall -q ingestion processing ml decision reporting explainability dashboard scripts tests
+        run: python -m compileall -q api ingestion processing ml decision reporting explainability dashboard scripts tests
 
       - name: Config validation gate
         run: python -m decision.config_validation

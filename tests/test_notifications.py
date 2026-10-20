@@ -55,6 +55,7 @@ def test_min_severity_override():
 
 @patch("reporting.notifications.urllib.request.urlopen")
 def test_send_alert_success_on_first_try(mock_urlopen, monkeypatch):
+    monkeypatch.setattr("reporting.notifications._is_url_allowed", lambda _url: True)
     mock_response = MagicMock()
     mock_response.status = 200
     mock_urlopen.return_value.__enter__.return_value = mock_response
@@ -73,6 +74,7 @@ def test_send_alert_success_on_first_try(mock_urlopen, monkeypatch):
 
 @patch("reporting.notifications.urllib.request.urlopen")
 def test_send_alert_retry_then_success(mock_urlopen, monkeypatch):
+    monkeypatch.setattr("reporting.notifications._is_url_allowed", lambda _url: True)
     mock_response = MagicMock()
     mock_response.status = 200
     # Make the mock its own context manager so side_effect entries work
@@ -98,6 +100,7 @@ def test_send_alert_retry_then_success(mock_urlopen, monkeypatch):
 
 @patch("reporting.notifications.urllib.request.urlopen")
 def test_send_alert_all_retries_fail(mock_urlopen, monkeypatch):
+    monkeypatch.setattr("reporting.notifications._is_url_allowed", lambda _url: True)
     mock_urlopen.side_effect = Exception("persistent failure")
 
     brief = {

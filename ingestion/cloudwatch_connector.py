@@ -54,13 +54,13 @@ def is_cloudwatch_available(log_group: str, region: str) -> bool:
     try:
         session = _make_session(region)
         client = session.client("logs")
-        # The pattern parameter is a substring search, and limiting to one
-        # result can hide the requested group behind an earlier partial match.
-        paginator = client.get_paginator("describe_log_groups")
-        for page in paginator.paginate(logGroupNamePrefix=log_group):
-            if any(g.get("logGroupName") == log_group for g in page.get("logGroups", [])):
-                return True
-        return False
+        # Ask AWS for an exact-name pattern; prefix pagination can return many
+        # unrelated groups and makes a health probe needlessly expensive.
+        response = client.describe_log_groups(logGroupNamePattern=log_group)
+        return any(
+            group.get("logGroupName") == log_group
+            for group in response.get("logGroups", [])
+        )
     except Exception as exc:
         logger.debug("CloudWatch availability check failed: %s", exc)
         return False

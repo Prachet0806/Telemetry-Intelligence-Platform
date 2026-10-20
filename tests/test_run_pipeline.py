@@ -21,7 +21,7 @@ def test_main_aborts_on_empty_ingestion(monkeypatch):
 
     monkeypatch.setattr(
         rp, "load_telemetry_auto",
-        lambda raw_path, rejected_path: (pd.DataFrame(), {"data_source": "local"}),
+        lambda raw_path, rejected_path, **kwargs: (pd.DataFrame(), {"data_source": "local"}),
     )
 
     # Empty ingestion returns a non-zero exit code (no traceback).

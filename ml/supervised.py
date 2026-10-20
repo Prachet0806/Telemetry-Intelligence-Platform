@@ -19,7 +19,7 @@ def train_supervised_model(
     Train the logistic risk classifier on a chronological hold-out split.
 
     Guards: rejects label leakage (label col in X), NaN/inf, single class,
-    and too-few positives for stratification. Features are standardized
+    and too-few positives for a meaningful holdout. Features are standardized
     inside a Pipeline (fit on train only).
 
     Returns

@@ -23,15 +23,16 @@ def _synthetic(n=4000, seed=0):
 
 def test_supervised_trains_and_returns_held_out_split():
     X, y = _synthetic()
-    model, report, split = train_supervised_model(X, y)
+    timestamps = pd.date_range("2026-01-01", periods=len(X), freq="min", tz="UTC")
+    model, report, split = train_supervised_model(X, y, time_values=timestamps)
 
     assert model is not None
     assert "1" in report and "0" in report
     assert split is not None
     y_test = split["y_test"]
     assert len(y_test) == len(split["supervised_pred"])
-    # stratified split preserves positive ratio
-    assert abs(y_test.mean() - y.mean()) < 0.02
+    assert split["strategy"] == "chronological"
+    assert split["X_train"].index.max() < y_test.index.min()
     # held-out metrics are honest (not perfect on noisy labels)
     assert report["1"]["recall"] < 1.0
 
