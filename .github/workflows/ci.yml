@@ -30,6 +30,14 @@ jobs:
       - name: Test suite
         run: pytest -q
 
+      - name: Generate deterministic telemetry for smoke run
+        run: >-
+          python scripts/generate_mock_telemetry.py
+          --n-events 500
+          --output-path data/raw/telemetry_logs.json
+          --seed 7
+          --now 2026-01-01T00:00:00Z
+
       - name: Pipeline smoke run
         run: python scripts/run_pipeline.py --offline --dry-run --skip-alerts
 
